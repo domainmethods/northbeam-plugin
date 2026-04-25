@@ -138,10 +138,10 @@ class NorthbeamClient:
                             f"{result.get('error', 'unknown')}"
                         )
                     await asyncio.sleep(EXPORT_POLL_INTERVAL)
-        except TimeoutError:
+        except TimeoutError as e:
             raise NorthbeamAPIError(
                 f"Export {export_id} timed out after {EXPORT_POLL_TIMEOUT}s"
-            )
+            ) from e
 
     async def download_export_csv(
         self, download_url: str, sample_size: int = SAMPLE_SIZE
@@ -154,10 +154,10 @@ class NorthbeamClient:
                 try:
                     header_line = await anext(lines)
                 except StopAsyncIteration:
-                    return {"data": [], "total_rows": 0}
+                    return {"data": [], "total_rows": 0, "columns": []}
 
                 if not header_line:
-                    return {"data": [], "total_rows": 0}
+                    return {"data": [], "total_rows": 0, "columns": []}
 
                 header = next(csv.reader(io.StringIO(header_line)))
                 rows: list[dict[str, str]] = []
@@ -171,7 +171,7 @@ class NorthbeamClient:
                         rows.append(dict(zip(header, values)))
                     total_rows += 1
 
-        return {"data": rows, "total_rows": total_rows}
+        return {"data": rows, "total_rows": total_rows, "columns": header}
 
     async def _request_with_retry(
         self,

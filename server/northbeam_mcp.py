@@ -174,10 +174,14 @@ async def _data_export(
                 "metrics": metrics or [],
             }
             create_result = await client.create_data_export(body)
-            export_id = create_result["export_id"]
+            export_id = create_result.get("export_id")
+            if not export_id:
+                raise ToolError("Northbeam API response missing 'export_id'")
 
             poll_result = await client.poll_export_result(export_id)
-            download_url = poll_result["download_url"]
+            download_url = poll_result.get("download_url")
+            if not download_url:
+                raise ToolError("Northbeam API response missing 'download_url'")
 
             csv_result = await client.download_export_csv(download_url)
             rows = csv_result["data"]
@@ -189,7 +193,7 @@ async def _data_export(
                 "date_range": {"start": date_start, "end": date_end},
                 "attribution_model": attribution_model,
                 "attribution_window": attribution_window,
-                "columns": list(rows[0].keys()) if rows else [],
+                "columns": csv_result.get("columns", []),
             },
             "data": rows,
         }

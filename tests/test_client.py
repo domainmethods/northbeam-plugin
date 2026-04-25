@@ -433,6 +433,7 @@ async def test_download_export_csv_parses_csv(config):
             )
 
     assert result["total_rows"] == 2
+    assert result["columns"] == ["platform", "revenue", "roas"]
     assert len(result["data"]) == 2
     assert result["data"][0]["platform"] == "Facebook"
     assert result["data"][0]["revenue"] == "1000.50"
@@ -475,6 +476,7 @@ async def test_download_export_csv_handles_empty_csv(config):
 
     assert result["total_rows"] == 0
     assert result["data"] == []
+    assert result["columns"] == ["platform", "revenue"]
 
 
 async def test_download_export_csv_handles_no_content(config):
@@ -490,6 +492,7 @@ async def test_download_export_csv_handles_no_content(config):
 
     assert result["total_rows"] == 0
     assert result["data"] == []
+    assert result["columns"] == []
 
 
 async def test_download_export_csv_does_not_send_auth_headers(config):

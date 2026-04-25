@@ -184,6 +184,7 @@ async def test_data_export_full_flow(
         )
 
     assert result["summary"]["total_rows"] == 2
+    assert result["summary"]["columns"] == ["platform", "campaign_name", "revenue", "roas"]
     assert result["summary"]["date_range"] == {"start": "2026-04-14", "end": "2026-04-20"}
     assert result["summary"]["attribution_model"] == "northbeam_custom__va"
     assert len(result["data"]) == 2

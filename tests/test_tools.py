@@ -2,7 +2,9 @@ import httpx
 import pytest
 import respx
 from mcp.server.fastmcp.exceptions import ToolError
-from server.northbeam_mcp import _list_spend, _check_connection, _list_options
+from server.northbeam_mcp import _list_spend, _check_connection, _list_options, _data_export
+
+import server.client as client_module
 
 
 async def test_list_spend_tool_returns_dict(config, sample_spend_response):
@@ -151,3 +153,90 @@ async def test_list_options_missing_config_raises_tool_error(monkeypatch):
 
     with pytest.raises(ToolError, match="Authentication failed"):
         await _list_options(config=None)
+
+
+async def test_data_export_full_flow(
+    config,
+    sample_export_create_response,
+    sample_export_completed_response,
+    sample_export_csv,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+
+    with respx.mock:
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(200, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=sample_export_csv)
+        )
+
+        result = await _data_export(
+            config=config,
+            date_start="2026-04-14",
+            date_end="2026-04-20",
+            metrics=["revenue", "roas"],
+            breakdowns=["platform", "campaign_name"],
+        )
+
+    assert result["summary"]["total_rows"] == 2
+    assert result["summary"]["date_range"] == {"start": "2026-04-14", "end": "2026-04-20"}
+    assert result["summary"]["attribution_model"] == "northbeam_custom__va"
+    assert len(result["data"]) == 2
+    assert result["data"][0]["platform"] == "Facebook"
+
+
+async def test_data_export_auth_error_raises_tool_error(config):
+    with respx.mock:
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(401, json={"message": "Bad key"})
+        )
+
+        with pytest.raises(ToolError, match="Authentication failed"):
+            await _data_export(
+                config=config,
+                date_start="2026-04-14",
+                date_end="2026-04-20",
+                metrics=["revenue"],
+                breakdowns=["platform"],
+            )
+
+
+async def test_data_export_adds_truncation_note_for_large_results(
+    config,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+
+    header = "platform,revenue\n"
+    rows_csv = "".join(f"Platform{i},{i * 100}\n" for i in range(50))
+    large_csv = header + rows_csv
+
+    with respx.mock:
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(200, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=large_csv)
+        )
+
+        result = await _data_export(
+            config=config,
+            date_start="2026-04-14",
+            date_end="2026-04-20",
+            metrics=["revenue"],
+            breakdowns=["platform"],
+        )
+
+    assert result["summary"]["total_rows"] == 50
+    assert len(result["data"]) == 20
+    assert "Showing 20 of 50 rows" in result["summary"]["note"]

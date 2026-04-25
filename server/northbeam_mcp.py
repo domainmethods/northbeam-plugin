@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import date, timedelta
+from datetime import date as date_type, timedelta
 
 from mcp.server.fastmcp import FastMCP
 
@@ -68,7 +68,7 @@ async def _check_connection(config: NorthbeamConfig | None = None) -> str:
         config = _get_config()
 
     try:
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        yesterday = (date_type.today() - timedelta(days=1)).isoformat()
         async with NorthbeamClient(config) as client:
             result = await client.list_spend(date=yesterday, page_size=1000)
 
@@ -76,7 +76,7 @@ async def _check_connection(config: NorthbeamConfig | None = None) -> str:
         record_count = result["total_count"]
 
         lines = [
-            f"Status: Connected",
+            "Status: Connected",
             f"Environment: {config.environment}",
             f"Records found (yesterday): {record_count}",
             f"Platforms visible: {', '.join(platforms) if platforms else 'none (no data for yesterday)'}",

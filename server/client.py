@@ -98,7 +98,8 @@ class NorthbeamClient:
         *,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        assert self._http is not None
+        if self._http is None:
+            raise RuntimeError("NorthbeamClient must be used as an async context manager")
 
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):

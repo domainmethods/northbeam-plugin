@@ -2,17 +2,6 @@ import httpx
 import pytest
 import respx
 from server.client import NorthbeamClient
-from server.config import NorthbeamConfig
-
-
-@pytest.fixture
-def config():
-    return NorthbeamConfig(
-        api_key="test-key",
-        client_id="test-client",
-        base_url="https://api.northbeam.io/v1",
-        environment="prod",
-    )
 
 
 @pytest.mark.asyncio

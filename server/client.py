@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
-import io
+import tempfile
 from typing import Any
 
 import httpx
@@ -146,23 +146,27 @@ class NorthbeamClient:
     async def download_export_csv(
         self, download_url: str, sample_size: int = SAMPLE_SIZE
     ) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as http:
-            response = await http.get(download_url)
-            response.raise_for_status()
-            text = response.text
+        with tempfile.TemporaryFile("w+", newline="", encoding="utf-8") as tmp:
+            async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as http:
+                async with http.stream("GET", download_url) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_text():
+                        tmp.write(chunk)
 
-        reader = csv.DictReader(io.StringIO(text))
-        if not reader.fieldnames:
-            return {"data": [], "total_rows": 0, "columns": []}
+            tmp.seek(0)
+            reader = csv.DictReader(tmp)
+            columns = list(reader.fieldnames or [])
+            if not columns:
+                return {"data": [], "total_rows": 0, "columns": []}
 
-        rows: list[dict[str, str]] = []
-        total_rows = 0
-        for row in reader:
-            if total_rows < sample_size:
-                rows.append(row)
-            total_rows += 1
+            rows: list[dict[str, str]] = []
+            total_rows = 0
+            for row in reader:
+                if total_rows < sample_size:
+                    rows.append(row)
+                total_rows += 1
 
-        return {"data": rows, "total_rows": total_rows, "columns": list(reader.fieldnames)}
+            return {"data": rows, "total_rows": total_rows, "columns": columns}
 
     async def _request_with_retry(
         self,
@@ -230,8 +234,6 @@ class NorthbeamClient:
                 return response.json()
             except ValueError:
                 raise NorthbeamAPIError(f"Invalid JSON response: {response.text}")
-
-        raise last_error or NorthbeamAPIError("Request failed after retries")
 
     @staticmethod
     def _parse_body(response: httpx.Response) -> dict[str, Any]:

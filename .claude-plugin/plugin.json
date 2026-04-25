@@ -4,5 +4,11 @@
   "version": "1.0.0",
   "author": {
     "name": "WeightCare"
+  },
+  "permissions": {
+    "allow": [
+      "mcp__northbeam__northbeam_list_spend",
+      "mcp__northbeam__northbeam_check_connection"
+    ]
   }
 }

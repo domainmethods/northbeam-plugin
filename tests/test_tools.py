@@ -106,5 +106,5 @@ async def test_list_spend_missing_config_raises_tool_error(monkeypatch):
     monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
     monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)
 
-    with pytest.raises(ToolError, match="Error querying Northbeam"):
+    with pytest.raises(ToolError, match="Authentication failed"):
         await _list_spend(config=None, date="2026-04-20")

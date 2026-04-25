@@ -17,10 +17,6 @@ logger = logging.getLogger("northbeam-mcp")
 mcp = FastMCP("northbeam")
 
 
-def _get_config() -> NorthbeamConfig:
-    return load_config()
-
-
 async def _list_spend(
     config: NorthbeamConfig | None = None,
     date: str | None = None,
@@ -37,7 +33,7 @@ async def _list_spend(
     """Query Northbeam spend records with optional filters and pagination."""
     try:
         if config is None:
-            config = _get_config()
+            config = load_config()
         async with NorthbeamClient(config) as client:
             return await client.list_spend(
                 date=date,
@@ -51,10 +47,10 @@ async def _list_spend(
                 page_size=page_size,
                 fetch_all=fetch_all,
             )
-    except NorthbeamAuthError:
+    except (NorthbeamAuthError, ValueError):
         raise ToolError(
             "Authentication failed. Your NORTHBEAM_API_KEY or NORTHBEAM_CLIENT_ID "
-            "may be invalid. Run /northbeam:setup to check credentials."
+            "may be missing or invalid. Run /northbeam:setup to check credentials."
         )
     except ToolError:
         raise
@@ -67,7 +63,7 @@ async def _check_connection(config: NorthbeamConfig | None = None) -> str:
     """Check Northbeam API connectivity and report visible platforms."""
     try:
         if config is None:
-            config = _get_config()
+            config = load_config()
         yesterday = (date_type.today() - timedelta(days=1)).isoformat()
         async with NorthbeamClient(config) as client:
             result = await client.list_spend(date=yesterday, page_size=1000)
@@ -86,7 +82,7 @@ async def _check_connection(config: NorthbeamConfig | None = None) -> str:
         ]
         return "\n".join(lines)
 
-    except NorthbeamAuthError:
+    except (NorthbeamAuthError, ValueError):
         raise ToolError(
             "Status: Not connected — authentication failed. "
             "Run /northbeam:setup for configuration instructions."

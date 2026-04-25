@@ -76,15 +76,12 @@ class NorthbeamClient:
 
         MAX_PAGES = 50
         all_data: list[dict] = []
-        current_page = 1
-        while True:
+        for current_page in range(1, MAX_PAGES + 1):
             params["page"] = current_page
             result = await self._request_with_retry("GET", "spend", params=params)
             all_data.extend(result.get("data") or [])
-            total_pages = result.get("total_pages") or 1
-            if current_page >= min(total_pages, MAX_PAGES):
+            if current_page >= (result.get("total_pages") or 1):
                 break
-            current_page += 1
 
         total_pages = result.get("total_pages") or 1
         return {

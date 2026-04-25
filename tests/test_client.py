@@ -1,7 +1,7 @@
 import httpx
 import pytest
 import respx
-from server.client import NorthbeamClient, NorthbeamAuthError
+from server.client import NorthbeamClient, NorthbeamAuthError, NorthbeamAPIError
 
 
 async def test_list_spend_sends_auth_headers(config, sample_spend_response):
@@ -326,6 +326,77 @@ async def test_list_export_options_auth_error_propagates(config):
     assert any(
         isinstance(e, NorthbeamAuthError) for e in exc_info.value.exceptions
     )
+
+
+async def test_create_data_export_sends_post_with_body(config):
+    request_body = {
+        "date_start": "2026-04-14",
+        "date_end": "2026-04-20",
+        "attribution_model": "northbeam_custom__va",
+        "attribution_window": "7",
+        "breakdowns": ["platform"],
+        "metrics": ["revenue"],
+    }
+
+    with respx.mock:
+        route = respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(200, json={"export_id": "exp-abc"})
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.create_data_export(request_body)
+
+    assert result["export_id"] == "exp-abc"
+    assert route.called
+
+
+async def test_poll_export_result_returns_on_completed(config):
+    with respx.mock:
+        route = respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-abc")
+        route.side_effect = [
+            httpx.Response(200, json={"status": "PENDING"}),
+            httpx.Response(200, json={"status": "PROCESSING"}),
+            httpx.Response(200, json={
+                "status": "COMPLETED",
+                "download_url": "https://storage.example.com/export.csv",
+            }),
+        ]
+
+        async with NorthbeamClient(config) as client:
+            result = await client.poll_export_result("exp-abc")
+
+    assert result["status"] == "COMPLETED"
+    assert result["download_url"] == "https://storage.example.com/export.csv"
+    assert route.call_count == 3
+
+
+async def test_poll_export_result_raises_on_failed(config):
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-fail").mock(
+            return_value=httpx.Response(200, json={
+                "status": "FAILED",
+                "error": "Invalid metrics",
+            })
+        )
+
+        async with NorthbeamClient(config) as client:
+            with pytest.raises(NorthbeamAPIError, match="exp-fail failed.*Invalid metrics"):
+                await client.poll_export_result("exp-fail")
+
+
+async def test_poll_export_result_raises_on_timeout(config, monkeypatch):
+    import server.client as client_module
+    monkeypatch.setattr(client_module, "EXPORT_POLL_TIMEOUT", 0.1)
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.05)
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-slow").mock(
+            return_value=httpx.Response(200, json={"status": "PROCESSING"})
+        )
+
+        async with NorthbeamClient(config) as client:
+            with pytest.raises(NorthbeamAPIError, match="timed out"):
+                await client.poll_export_result("exp-slow")
 
 
 async def test_request_with_retry_sends_json_body(config):

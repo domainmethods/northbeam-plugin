@@ -9,6 +9,8 @@ from server.config import NorthbeamConfig
 
 MAX_RETRIES = 3
 INITIAL_BACKOFF = 0.5
+EXPORT_POLL_INTERVAL = 2.0
+EXPORT_POLL_TIMEOUT = 60.0
 
 
 class NorthbeamAuthError(Exception):
@@ -110,6 +112,32 @@ class NorthbeamClient:
             "metrics": met_task.result(),
             "attribution_models": mod_task.result(),
         }
+
+    async def create_data_export(self, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._request_with_retry(
+            "POST", "exports/data-export", json=body
+        )
+
+    async def poll_export_result(self, export_id: str) -> dict[str, Any]:
+        try:
+            async with asyncio.timeout(EXPORT_POLL_TIMEOUT):
+                while True:
+                    result = await self._request_with_retry(
+                        "GET", f"exports/data-export/result/{export_id}"
+                    )
+                    status = result.get("status", "").upper()
+                    if status == "COMPLETED":
+                        return result
+                    if status == "FAILED":
+                        raise NorthbeamAPIError(
+                            f"Export {export_id} failed: "
+                            f"{result.get('error', 'unknown')}"
+                        )
+                    await asyncio.sleep(EXPORT_POLL_INTERVAL)
+        except TimeoutError:
+            raise NorthbeamAPIError(
+                f"Export {export_id} timed out after {EXPORT_POLL_TIMEOUT}s"
+            )
 
     async def _request_with_retry(
         self,

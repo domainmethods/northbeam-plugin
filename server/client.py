@@ -29,8 +29,11 @@ class NorthbeamClient:
         self._http: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> NorthbeamClient:
+        base_url = self._config.base_url
+        if not base_url.endswith("/"):
+            base_url += "/"
         self._http = httpx.AsyncClient(
-            base_url=self._config.base_url,
+            base_url=base_url,
             headers=self._config.auth_headers(),
             timeout=30.0,
         )
@@ -69,24 +72,24 @@ class NorthbeamClient:
         }
 
         if not fetch_all:
-            return await self._request_with_retry("GET", "/spend", params=params)
+            return await self._request_with_retry("GET", "spend", params=params)
 
         MAX_PAGES = 50
         all_data: list[dict] = []
         current_page = 1
         while True:
             params["page"] = current_page
-            result = await self._request_with_retry("GET", "/spend", params=params)
+            result = await self._request_with_retry("GET", "spend", params=params)
             all_data.extend(result["data"])
-            if current_page >= min(result["total_pages"], MAX_PAGES):
+            if current_page >= min(result.get("total_pages", 1), MAX_PAGES):
                 break
             current_page += 1
 
         return {
             "data": all_data,
-            "total_count": result["total_count"],
+            "total_count": result.get("total_count", len(all_data)),
             "pages_fetched": current_page,
-            "capped": current_page >= MAX_PAGES and result["total_pages"] > MAX_PAGES,
+            "capped": current_page >= MAX_PAGES and result.get("total_pages", 1) > MAX_PAGES,
         }
 
     async def _request_with_retry(

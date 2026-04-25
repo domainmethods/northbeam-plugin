@@ -252,3 +252,20 @@ async def test_non_dict_json_error_body_handled(config):
         async with NorthbeamClient(config) as client:
             with pytest.raises(Exception, match="Internal Server Error"):
                 await client.list_spend(date="2026-04-20")
+
+
+async def test_base_url_resolves_correctly(config):
+    """Verify trailing-slash base URL + relative path produces correct URL."""
+    with respx.mock:
+        route = respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, json={
+                "data": [], "page": 1, "page_size": 1000,
+                "total_pages": 1, "total_count": 0,
+            })
+        )
+
+        async with NorthbeamClient(config) as client:
+            await client.list_spend(date="2026-04-20")
+
+        assert route.called
+        assert str(route.calls[0].request.url).startswith("https://api.northbeam.io/v1/spend")

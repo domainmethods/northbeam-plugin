@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "northbeam": {
+      "command": "python",
+      "args": ["server/northbeam_mcp.py"],
+      "env": {
+        "NORTHBEAM_API_KEY": "${NORTHBEAM_API_KEY}",
+        "NORTHBEAM_CLIENT_ID": "${NORTHBEAM_CLIENT_ID}",
+        "NORTHBEAM_API_ENV": "${NORTHBEAM_API_ENV:-prod}"
+      }
+    }
+  }
+}

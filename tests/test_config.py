@@ -1,5 +1,5 @@
 import pytest
-from server.config import load_config, NorthbeamConfig
+from server.config import load_config, NorthbeamConfig, NorthbeamConfigError
 
 
 def test_load_config_from_env(monkeypatch):
@@ -30,7 +30,7 @@ def test_load_config_missing_api_key(monkeypatch):
     monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
     monkeypatch.setenv("NORTHBEAM_CLIENT_ID", "test-client")
 
-    with pytest.raises(ValueError, match="NORTHBEAM_API_KEY"):
+    with pytest.raises(NorthbeamConfigError, match="NORTHBEAM_API_KEY"):
         load_config()
 
 
@@ -38,7 +38,7 @@ def test_load_config_missing_client_id(monkeypatch):
     monkeypatch.setenv("NORTHBEAM_API_KEY", "test-key")
     monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)
 
-    with pytest.raises(ValueError, match="NORTHBEAM_CLIENT_ID"):
+    with pytest.raises(NorthbeamConfigError, match="NORTHBEAM_CLIENT_ID"):
         load_config()
 
 

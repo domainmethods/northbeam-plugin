@@ -9,12 +9,17 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from server.client import NorthbeamClient, NorthbeamAuthError
-from server.config import NorthbeamConfig, load_config
+from server.config import NorthbeamConfig, NorthbeamConfigError, load_config
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 logger = logging.getLogger("northbeam-mcp")
 
 mcp = FastMCP("northbeam")
+
+AUTH_ERROR_MSG = (
+    "Authentication failed. Your NORTHBEAM_API_KEY or NORTHBEAM_CLIENT_ID "
+    "may be missing or invalid. Run /northbeam:setup to check credentials."
+)
 
 
 async def _list_spend(
@@ -47,11 +52,8 @@ async def _list_spend(
                 page_size=page_size,
                 fetch_all=fetch_all,
             )
-    except (NorthbeamAuthError, ValueError):
-        raise ToolError(
-            "Authentication failed. Your NORTHBEAM_API_KEY or NORTHBEAM_CLIENT_ID "
-            "may be missing or invalid. Run /northbeam:setup to check credentials."
-        )
+    except (NorthbeamAuthError, NorthbeamConfigError):
+        raise ToolError(AUTH_ERROR_MSG) from None
     except ToolError:
         raise
     except Exception as e:
@@ -82,7 +84,7 @@ async def _check_connection(config: NorthbeamConfig | None = None) -> str:
         ]
         return "\n".join(lines)
 
-    except (NorthbeamAuthError, ValueError):
+    except (NorthbeamAuthError, NorthbeamConfigError):
         raise ToolError(
             "Status: Not connected — authentication failed. "
             "Run /northbeam:setup for configuration instructions."
@@ -128,11 +130,129 @@ async def northbeam_list_spend(
     )
 
 
+async def _list_options(config: NorthbeamConfig | None = None) -> dict[str, Any]:
+    """Fetch available breakdowns, metrics, and attribution models."""
+    try:
+        if config is None:
+            config = load_config()
+        async with NorthbeamClient(config) as client:
+            return await client.list_export_options()
+    except (NorthbeamAuthError, NorthbeamConfigError):
+        raise ToolError(AUTH_ERROR_MSG) from None
+    except ExceptionGroup as eg:
+        if any(isinstance(e, (NorthbeamAuthError, NorthbeamConfigError)) for e in eg.exceptions):
+            raise ToolError(AUTH_ERROR_MSG) from None
+        logger.error("list_options error: %r", eg)
+        raise ToolError(f"Error fetching export options: {eg.exceptions[0]}") from None
+    except ToolError:
+        raise
+    except Exception as e:
+        logger.error("list_options error: %s", e)
+        raise ToolError(f"Error fetching export options: {e}")
+
+
+async def _data_export(
+    config: NorthbeamConfig | None = None,
+    date_start: str = "",
+    date_end: str = "",
+    metrics: list[str] | None = None,
+    breakdowns: list[str] | None = None,
+    attribution_model: str = "northbeam_custom__va",
+    attribution_window: str = "7",
+) -> dict[str, Any]:
+    """Run a full Data Export: create → poll → download → summarize."""
+    try:
+        if config is None:
+            config = load_config()
+        async with NorthbeamClient(config) as client:
+            body = {
+                "date_start": date_start,
+                "date_end": date_end,
+                "attribution_model": attribution_model,
+                "attribution_window": attribution_window,
+                "breakdowns": breakdowns or [],
+                "metrics": metrics or [],
+            }
+            create_result = await client.create_data_export(body)
+            export_id = create_result.get("export_id")
+            if not export_id:
+                raise ToolError("Northbeam API response missing 'export_id'")
+
+            poll_result = await client.poll_export_result(export_id)
+            download_url = poll_result.get("download_url")
+            if not download_url:
+                raise ToolError("Northbeam API response missing 'download_url'")
+
+            csv_result = await client.download_export_csv(download_url)
+            rows = csv_result["data"]
+            total_rows = csv_result["total_rows"]
+
+        result: dict[str, Any] = {
+            "summary": {
+                "total_rows": total_rows,
+                "date_range": {"start": date_start, "end": date_end},
+                "attribution_model": attribution_model,
+                "attribution_window": attribution_window,
+                "columns": csv_result.get("columns", []),
+            },
+            "data": rows,
+        }
+        if total_rows > len(rows):
+            result["summary"]["note"] = (
+                f"Showing {len(rows)} of {total_rows} rows. "
+                "Narrow the date range or breakdowns to see all data."
+            )
+        return result
+
+    except (NorthbeamAuthError, NorthbeamConfigError):
+        raise ToolError(AUTH_ERROR_MSG) from None
+    except ToolError:
+        raise
+    except Exception as e:
+        logger.error("data_export error: %s", e)
+        raise ToolError(f"Error running data export: {e}")
+
+
 @mcp.tool()
 async def northbeam_check_connection() -> str:
     """Check Northbeam API connectivity. Validates credentials and reports
     the environment (prod/uat) and which ad platforms are visible."""
     return await _check_connection()
+
+
+@mcp.tool()
+async def northbeam_list_options() -> dict[str, Any]:
+    """List available breakdowns, metrics, and attribution models
+    for the Northbeam Data Export API. Use this to discover valid
+    parameter values before calling northbeam_data_export."""
+    return await _list_options()
+
+
+@mcp.tool()
+async def northbeam_data_export(
+    date_start: str,
+    date_end: str,
+    metrics: list[str],
+    breakdowns: list[str],
+    attribution_model: str = "northbeam_custom__va",
+    attribution_window: str = "7",
+) -> dict[str, Any]:
+    """Run a Northbeam Data Export for outcome metrics (revenue, ROAS, CAC,
+    conversions, etc.) with flexible breakdowns and attribution settings.
+
+    Use northbeam_list_options to discover valid metric/breakdown/model values.
+
+    Returns a summary with row count, date range, columns, and a sample of
+    up to 20 rows. The full dataset is included when total rows ≤ 20.
+    """
+    return await _data_export(
+        date_start=date_start,
+        date_end=date_end,
+        metrics=metrics,
+        breakdowns=breakdowns,
+        attribution_model=attribution_model,
+        attribution_window=attribution_window,
+    )
 
 
 if __name__ == "__main__":

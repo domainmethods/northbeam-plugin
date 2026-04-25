@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 from typing import Any
 
 import httpx
@@ -9,6 +11,10 @@ from server.config import NorthbeamConfig
 
 MAX_RETRIES = 3
 INITIAL_BACKOFF = 0.5
+EXPORT_POLL_INTERVAL = 2.0
+EXPORT_POLL_TIMEOUT = 60.0
+SAMPLE_SIZE = 20
+DOWNLOAD_TIMEOUT = 60.0
 
 
 class NorthbeamAuthError(Exception):
@@ -79,7 +85,10 @@ class NorthbeamClient:
         for current_page in range(1, MAX_PAGES + 1):
             params["page"] = current_page
             result = await self._request_with_retry("GET", "spend", params=params)
-            all_data.extend(result.get("data") or [])
+            page_data = result.get("data") or []
+            if not page_data:
+                break
+            all_data.extend(page_data)
             if current_page >= (result.get("total_pages") or 1):
                 break
 
@@ -91,12 +100,77 @@ class NorthbeamClient:
             "capped": current_page >= MAX_PAGES and total_pages > MAX_PAGES,
         }
 
+    async def list_export_options(self) -> dict[str, Any]:
+        async with asyncio.TaskGroup() as tg:
+            bd_task = tg.create_task(
+                self._request_with_retry("GET", "exports/breakdowns")
+            )
+            met_task = tg.create_task(
+                self._request_with_retry("GET", "exports/metrics")
+            )
+            mod_task = tg.create_task(
+                self._request_with_retry("GET", "exports/attribution-models")
+            )
+        return {
+            "breakdowns": bd_task.result(),
+            "metrics": met_task.result(),
+            "attribution_models": mod_task.result(),
+        }
+
+    async def create_data_export(self, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._request_with_retry(
+            "POST", "exports/data-export", json=body
+        )
+
+    async def poll_export_result(self, export_id: str) -> dict[str, Any]:
+        try:
+            async with asyncio.timeout(EXPORT_POLL_TIMEOUT):
+                while True:
+                    result = await self._request_with_retry(
+                        "GET", f"exports/data-export/result/{export_id}"
+                    )
+                    status = result.get("status", "").upper()
+                    if status == "COMPLETED":
+                        return result
+                    if status == "FAILED":
+                        raise NorthbeamAPIError(
+                            f"Export {export_id} failed: "
+                            f"{result.get('error', 'unknown')}"
+                        )
+                    await asyncio.sleep(EXPORT_POLL_INTERVAL)
+        except TimeoutError as e:
+            raise NorthbeamAPIError(
+                f"Export {export_id} timed out after {EXPORT_POLL_TIMEOUT}s"
+            ) from e
+
+    async def download_export_csv(
+        self, download_url: str, sample_size: int = SAMPLE_SIZE
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as http:
+            response = await http.get(download_url)
+            response.raise_for_status()
+            text = response.text
+
+        reader = csv.DictReader(io.StringIO(text))
+        if not reader.fieldnames:
+            return {"data": [], "total_rows": 0, "columns": []}
+
+        rows: list[dict[str, str]] = []
+        total_rows = 0
+        for row in reader:
+            if total_rows < sample_size:
+                rows.append(row)
+            total_rows += 1
+
+        return {"data": rows, "total_rows": total_rows, "columns": list(reader.fieldnames)}
+
     async def _request_with_retry(
         self,
         method: str,
         path: str,
         *,
         params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if self._http is None:
             raise RuntimeError("NorthbeamClient must be used as an async context manager")
@@ -104,7 +178,7 @@ class NorthbeamClient:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
-                response = await self._http.request(method, path, params=params)
+                response = await self._http.request(method, path, params=params, json=json)
             except httpx.RequestError as e:
                 last_error = NorthbeamAPIError(f"Network error: {e}")
                 if attempt < MAX_RETRIES - 1:

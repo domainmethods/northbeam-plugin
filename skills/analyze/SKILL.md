@@ -1,7 +1,7 @@
 ---
 name: analyze
-description: Strategic Northbeam spend analysis — ad hoc queries, anomaly detection, budget optimization, and portfolio health. Use when the user asks about ad spend, marketing performance, budget allocation, or campaign efficiency.
-allowed-tools: mcp__northbeam__northbeam_list_spend, mcp__northbeam__northbeam_check_connection, Read
+description: Strategic Northbeam analysis — ad hoc queries, anomaly detection, budget optimization, portfolio health, and outcome metrics (ROAS, revenue, CAC). Use when the user asks about ad spend, marketing performance, budget allocation, campaign efficiency, or return on ad spend.
+allowed-tools: mcp__northbeam__northbeam_list_spend, mcp__northbeam__northbeam_data_export, mcp__northbeam__northbeam_list_options, mcp__northbeam__northbeam_check_connection, Read
 user-invocable: true
 ---
 
@@ -37,6 +37,39 @@ Attempt to read `~/.claude/northbeam-profile.json`. If it exists, extract and us
 If the profile does not exist and the user asks budget-related questions, note:
 
 > "I don't have your budget targets on file. Run `/northbeam:setup` to save your monthly budgets and goals — that will unlock budget pacing and target-vs-actual comparisons."
+
+---
+
+## Tool Routing
+
+Choose the right tool based on what the user is asking about:
+
+| User asks about | Tool to use | Why |
+|----------------|-------------|-----|
+| Spend, impressions, clicks, CPC, CPM, CTR | `northbeam_list_spend` | Spend API has these natively |
+| Revenue, ROAS, CAC, conversions, orders | `northbeam_data_export` | Outcome metrics require Data Export |
+| "How are we doing?" / portfolio health | Both | Spend from list_spend, outcomes from data_export |
+| Budget pacing | `northbeam_list_spend` | Pacing uses spend data only |
+| Available metrics/breakdowns | `northbeam_list_options` | Discovery before data_export calls |
+
+**Rule of thumb:** If the user mentions money going OUT (spend, budget, cost), use `northbeam_list_spend`. If they mention money coming IN (revenue, ROAS, orders) or conversion outcomes, use `northbeam_data_export`.
+
+### Discovery Flow
+
+When the user asks for metrics or breakdowns you haven't seen before:
+
+1. Call `northbeam_list_options` to get available values
+2. Match the user's request to available options
+3. If no match, suggest the closest available options
+4. Proceed with `northbeam_data_export` using matched values
+
+### Data Export Defaults
+
+Unless the user specifies otherwise, use these defaults for `northbeam_data_export`:
+- `attribution_model`: `"northbeam_custom__va"` (Northbeam Custom VA)
+- `attribution_window`: `"7"` (7-day window)
+
+If the user asks about attribution model differences, use the Attribution Model Comparison capability below.
 
 ---
 
@@ -141,6 +174,10 @@ For each metric, compute:
 
 Format: show both in output. Example: "Spend up $1,240 (+8.2% WoW)"
 
+### Outcome Metric Deltas
+
+When the user asks about revenue, ROAS, or conversions in a period comparison, use `northbeam_data_export` for both periods. Compute the same absolute and relative deltas as above. Example: "Revenue up $4,200 (+12% WoW)"
+
 ### Large Swing Flags
 
 Flag any metric where the relative delta exceeds ±25%:
@@ -171,6 +208,7 @@ Fetch the last 14 days of spend data across all channels and campaigns.
 3. **Budget pacing anomalies** — any channel over-pacing (>1.15) or under-pacing (<0.85) if profile budgets exist
 4. **Zero-spend days** — any day in the last 7 where total spend = $0 (may indicate outage or auth issue)
 5. **Volume-spend divergence** — spend increasing while clicks/impressions flat or declining (efficiency degradation signal)
+6. **Revenue drops** *(via northbeam_data_export)* — revenue declined >20% WoW for any channel. Cross-reference with spend data: if spend is flat but revenue dropped, flag as efficiency degradation.
 
 ### Output Format
 
@@ -269,6 +307,7 @@ Model how to reallocate budget across channels for improved efficiency.
 1. Pull 14 days of spend data across all channels
 2. Compute CPC and CPM per channel (use derived metrics formula above)
 3. Rank channels by efficiency (lowest CPC for direct-response; lowest CPM for awareness)
+3b. If `northbeam_data_export` data is available, also compute ROAS per channel and factor it into rankings (high ROAS + low fatigue = strong scaling candidate)
 4. Exclude channels flagged as Critical in diminishing returns detection
 5. Weight reallocation toward lowest-CPC/CPM channels that are not showing fatigue signs
 
@@ -314,6 +353,11 @@ Deliver a snapshot of overall marketing portfolio health. Trigger when the user 
 - Blended CPC and CPM across all channels
 - Per-platform CPC and CPM with MoM delta
 - Flag any platform more than 20% above or below blended average
+
+**2b. Outcome Metrics** *(via northbeam_data_export)*
+- Blended ROAS across all channels (if data available)
+- Per-platform ROAS with MoM delta
+- Flag any platform with ROAS below profile `roas_goal` target
 
 **3. Budget Pacing** *(only if profile budgets exist)*
 - Pacing status for each channel (over / on track / under)
@@ -379,3 +423,30 @@ Compare performance to known DTC/Ecommerce industry benchmarks.
    - The user explicitly asks "how does this compare to industry?" or similar, OR
    - A metric is significantly outside the range (>50% above the upper bound), in which case proactively note it as an outlier
 4. Do not benchmark channels not listed in the table above.
+
+---
+
+## Capability: Attribution Model Comparison
+
+Compare how different attribution models value the same campaigns/channels.
+
+### When to Apply
+When the user asks "which attribution model should I use?", "how does my ROAS look under different models?", or wants to compare attribution approaches.
+
+### Process
+1. Call `northbeam_list_options` to get available attribution models
+2. Call `northbeam_data_export` once per model the user wants to compare (default: compare top 2-3 most common models)
+3. Align results by breakdown key and present side-by-side
+
+### Output Format
+Table with breakdown as rows, metrics repeated per model as columns:
+
+| Campaign | Revenue (Last Touch) | ROAS (Last Touch) | Revenue (Linear) | ROAS (Linear) |
+|----------|---------------------|-------------------|------------------|---------------|
+| FB_Prospecting | $12,400 | 3.2x | $8,100 | 2.1x |
+
+### Caveat
+
+Always append:
+
+> "Attribution models distribute credit differently — no single model is 'correct.' Use this comparison to understand the range of credit each channel receives, then validate with incrementality tests."

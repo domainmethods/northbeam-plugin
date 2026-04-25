@@ -1,7 +1,7 @@
 import httpx
 import pytest
 import respx
-from server.client import NorthbeamClient
+from server.client import NorthbeamClient, NorthbeamAuthError, NorthbeamAPIError
 
 
 async def test_list_spend_sends_auth_headers(config, sample_spend_response):
@@ -281,3 +281,252 @@ async def test_200_with_non_json_body_raises_api_error(config):
         async with NorthbeamClient(config) as client:
             with pytest.raises(Exception, match="Invalid JSON response"):
                 await client.list_spend(date="2026-04-20")
+
+
+async def test_list_export_options_returns_combined_metadata(config):
+    breakdowns_resp = {"data": [{"id": "platform", "name": "Platform"}]}
+    metrics_resp = {"data": [{"id": "revenue", "name": "Revenue"}]}
+    models_resp = {"data": [{"id": "northbeam_custom__va", "name": "Northbeam Custom VA"}]}
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(200, json=breakdowns_resp)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json=metrics_resp)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json=models_resp)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.list_export_options()
+
+    assert result["breakdowns"] == breakdowns_resp
+    assert result["metrics"] == metrics_resp
+    assert result["attribution_models"] == models_resp
+
+
+async def test_list_export_options_auth_error_propagates(config):
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(401, json={"message": "Bad key"})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json={"data": []})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json={"data": []})
+        )
+
+        async with NorthbeamClient(config) as client:
+            with pytest.raises(ExceptionGroup) as exc_info:
+                await client.list_export_options()
+
+    assert any(
+        isinstance(e, NorthbeamAuthError) for e in exc_info.value.exceptions
+    )
+
+
+async def test_create_data_export_sends_post_with_body(config):
+    request_body = {
+        "date_start": "2026-04-14",
+        "date_end": "2026-04-20",
+        "attribution_model": "northbeam_custom__va",
+        "attribution_window": "7",
+        "breakdowns": ["platform"],
+        "metrics": ["revenue"],
+    }
+
+    with respx.mock:
+        route = respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(200, json={"export_id": "exp-abc"})
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.create_data_export(request_body)
+
+    assert result["export_id"] == "exp-abc"
+    assert route.called
+
+
+async def test_poll_export_result_returns_on_completed(config):
+    with respx.mock:
+        route = respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-abc")
+        route.side_effect = [
+            httpx.Response(200, json={"status": "PENDING"}),
+            httpx.Response(200, json={"status": "PROCESSING"}),
+            httpx.Response(200, json={
+                "status": "COMPLETED",
+                "download_url": "https://storage.example.com/export.csv",
+            }),
+        ]
+
+        async with NorthbeamClient(config) as client:
+            result = await client.poll_export_result("exp-abc")
+
+    assert result["status"] == "COMPLETED"
+    assert result["download_url"] == "https://storage.example.com/export.csv"
+    assert route.call_count == 3
+
+
+async def test_poll_export_result_raises_on_failed(config):
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-fail").mock(
+            return_value=httpx.Response(200, json={
+                "status": "FAILED",
+                "error": "Invalid metrics",
+            })
+        )
+
+        async with NorthbeamClient(config) as client:
+            with pytest.raises(NorthbeamAPIError, match="exp-fail failed.*Invalid metrics"):
+                await client.poll_export_result("exp-fail")
+
+
+async def test_poll_export_result_raises_on_timeout(config, monkeypatch):
+    import server.client as client_module
+    monkeypatch.setattr(client_module, "EXPORT_POLL_TIMEOUT", 0.1)
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.05)
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-slow").mock(
+            return_value=httpx.Response(200, json={"status": "PROCESSING"})
+        )
+
+        async with NorthbeamClient(config) as client:
+            with pytest.raises(NorthbeamAPIError, match="timed out"):
+                await client.poll_export_result("exp-slow")
+
+
+async def test_request_with_retry_sends_json_body(config):
+    request_body = {"date_start": "2026-04-14", "metrics": ["revenue"]}
+    response_body = {"export_id": "exp-123"}
+
+    with respx.mock:
+        route = respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(200, json=response_body)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client._request_with_retry(
+                "POST", "exports/data-export", json=request_body
+            )
+
+    assert result == response_body
+    assert route.called
+    sent = route.calls[0].request
+    assert sent.headers["content-type"] == "application/json"
+
+
+async def test_download_export_csv_parses_csv(config):
+    csv_content = "platform,revenue,roas\nFacebook,1000.50,3.2\nTikTok,500.25,2.1\n"
+
+    with respx.mock:
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.download_export_csv(
+                "https://storage.example.com/export.csv"
+            )
+
+    assert result["total_rows"] == 2
+    assert result["columns"] == ["platform", "revenue", "roas"]
+    assert len(result["data"]) == 2
+    assert result["data"][0]["platform"] == "Facebook"
+    assert result["data"][0]["revenue"] == "1000.50"
+    assert result["data"][1]["platform"] == "TikTok"
+
+
+async def test_download_export_csv_limits_returned_rows(config):
+    header = "platform,revenue\n"
+    rows = "".join(f"Platform{i},{i * 100}\n" for i in range(200))
+    csv_content = header + rows
+
+    with respx.mock:
+        respx.get("https://storage.example.com/big.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.download_export_csv(
+                "https://storage.example.com/big.csv", sample_size=5
+            )
+
+    assert result["total_rows"] == 200
+    assert len(result["data"]) == 5
+    assert result["data"][0]["platform"] == "Platform0"
+    assert result["data"][4]["platform"] == "Platform4"
+
+
+async def test_download_export_csv_handles_empty_csv(config):
+    csv_content = "platform,revenue\n"
+
+    with respx.mock:
+        respx.get("https://storage.example.com/empty.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.download_export_csv(
+                "https://storage.example.com/empty.csv"
+            )
+
+    assert result["total_rows"] == 0
+    assert result["data"] == []
+    assert result["columns"] == ["platform", "revenue"]
+
+
+async def test_download_export_csv_handles_no_content(config):
+    with respx.mock:
+        respx.get("https://storage.example.com/nothing.csv").mock(
+            return_value=httpx.Response(200, text="")
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.download_export_csv(
+                "https://storage.example.com/nothing.csv"
+            )
+
+    assert result["total_rows"] == 0
+    assert result["data"] == []
+    assert result["columns"] == []
+
+
+async def test_download_export_csv_does_not_send_auth_headers(config):
+    csv_content = "platform,revenue\nFacebook,1000\n"
+
+    with respx.mock:
+        route = respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        async with NorthbeamClient(config) as client:
+            await client.download_export_csv(
+                "https://storage.example.com/export.csv"
+            )
+
+    sent_headers = dict(route.calls[0].request.headers)
+    assert "authorization" not in sent_headers
+    assert "data-client-id" not in sent_headers
+
+
+async def test_download_export_csv_handles_quoted_newlines(config):
+    csv_content = 'platform,campaign_name,revenue\nFacebook,"Spring\nPromo",1500\nTikTok,Summer,800\n'
+
+    with respx.mock:
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.download_export_csv(
+                "https://storage.example.com/export.csv"
+            )
+
+    assert result["total_rows"] == 2
+    assert len(result["data"]) == 2
+    assert result["data"][0]["campaign_name"] == "Spring\nPromo"
+    assert result["data"][1]["platform"] == "TikTok"

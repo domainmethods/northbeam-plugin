@@ -42,3 +42,34 @@ def sample_spend_response(sample_spend_record):
         "total_pages": 1,
         "total_count": 1,
     }
+
+
+@pytest.fixture
+def sample_export_options():
+    return {
+        "breakdowns": {"data": [{"id": "platform", "name": "Platform"}]},
+        "metrics": {"data": [{"id": "revenue", "name": "Revenue"}]},
+        "attribution_models": {"data": [{"id": "northbeam_custom__va", "name": "NB Custom VA"}]},
+    }
+
+
+@pytest.fixture
+def sample_export_create_response():
+    return {"export_id": "exp-test-123"}
+
+
+@pytest.fixture
+def sample_export_completed_response():
+    return {
+        "status": "COMPLETED",
+        "download_url": "https://storage.example.com/export.csv",
+    }
+
+
+@pytest.fixture
+def sample_export_csv():
+    return (
+        "platform,campaign_name,revenue,roas\n"
+        "Facebook,FB_Prospecting,1500.00,3.20\n"
+        "TikTok,TT_Retargeting,800.00,2.10\n"
+    )

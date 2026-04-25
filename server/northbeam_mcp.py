@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from server.client import NorthbeamClient, NorthbeamAuthError
-from server.config import NorthbeamConfig, load_config
+from server.config import NorthbeamConfig, NorthbeamConfigError, load_config
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 logger = logging.getLogger("northbeam-mcp")
@@ -47,7 +47,7 @@ async def _list_spend(
                 page_size=page_size,
                 fetch_all=fetch_all,
             )
-    except (NorthbeamAuthError, ValueError):
+    except (NorthbeamAuthError, NorthbeamConfigError):
         raise ToolError(
             "Authentication failed. Your NORTHBEAM_API_KEY or NORTHBEAM_CLIENT_ID "
             "may be missing or invalid. Run /northbeam:setup to check credentials."
@@ -82,7 +82,7 @@ async def _check_connection(config: NorthbeamConfig | None = None) -> str:
         ]
         return "\n".join(lines)
 
-    except (NorthbeamAuthError, ValueError):
+    except (NorthbeamAuthError, NorthbeamConfigError):
         raise ToolError(
             "Status: Not connected — authentication failed. "
             "Run /northbeam:setup for configuration instructions."

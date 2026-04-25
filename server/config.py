@@ -9,6 +9,10 @@ BASE_URLS = {
 }
 
 
+class NorthbeamConfigError(Exception):
+    pass
+
+
 @dataclass(frozen=True)
 class NorthbeamConfig:
     api_key: str
@@ -27,14 +31,14 @@ class NorthbeamConfig:
 def load_config() -> NorthbeamConfig:
     api_key = os.getenv("NORTHBEAM_API_KEY")
     if not api_key:
-        raise ValueError(
+        raise NorthbeamConfigError(
             "NORTHBEAM_API_KEY environment variable is not set. "
             "Run /northbeam:setup for configuration instructions."
         )
 
     client_id = os.getenv("NORTHBEAM_CLIENT_ID")
     if not client_id:
-        raise ValueError(
+        raise NorthbeamConfigError(
             "NORTHBEAM_CLIENT_ID environment variable is not set. "
             "Run /northbeam:setup for configuration instructions."
         )

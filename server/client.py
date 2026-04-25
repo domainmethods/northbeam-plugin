@@ -120,7 +120,10 @@ class NorthbeamClient:
             if response.status_code == 422:
                 body = self._parse_body(response)
                 errors = body.get("errors", [])
-                detail = "; ".join(f"{e['loc']}: {e['msg']}" for e in errors) if errors else ""
+                detail = "; ".join(
+                    f"{e.get('loc', 'unknown')}: {e.get('msg', 'error')}"
+                    for e in errors if isinstance(e, dict)
+                ) if isinstance(errors, list) else ""
                 raise NorthbeamValidationError(
                     f"Validation error: {body.get('message', '')} {detail}".strip()
                 )
@@ -155,6 +158,8 @@ class NorthbeamClient:
     def _parse_body(response: httpx.Response) -> dict[str, Any]:
         try:
             body = response.json()
+            if not isinstance(body, dict):
+                return {"message": str(body)}
         except ValueError:
             return {"message": response.text}
         if "message" not in body and "response" in body:

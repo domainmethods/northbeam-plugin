@@ -240,3 +240,15 @@ async def test_error_body_response_field_normalized_to_message(config):
         async with NorthbeamClient(config) as client:
             with pytest.raises(Exception, match="Invalid credentials"):
                 await client.list_spend(date="2026-04-20")
+
+
+async def test_non_dict_json_error_body_handled(config):
+    """Proxies/WAFs may return JSON-encoded strings instead of objects."""
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(500, json="Internal Server Error")
+        )
+
+        async with NorthbeamClient(config) as client:
+            with pytest.raises(Exception, match="Internal Server Error"):
+                await client.list_spend(date="2026-04-20")

@@ -440,7 +440,7 @@ async def test_download_export_csv_parses_csv(config):
     assert result["data"][1]["platform"] == "TikTok"
 
 
-async def test_download_export_csv_bounds_memory_with_sample(config):
+async def test_download_export_csv_limits_returned_rows(config):
     header = "platform,revenue\n"
     rows = "".join(f"Platform{i},{i * 100}\n" for i in range(200))
     csv_content = header + rows

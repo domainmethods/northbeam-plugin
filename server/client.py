@@ -150,8 +150,6 @@ class NorthbeamClient:
             response = await http.get(download_url)
             response.raise_for_status()
             text = response.text
-            if not text.strip():
-                return {"data": [], "total_rows": 0, "columns": []}
 
         reader = csv.DictReader(io.StringIO(text))
         if not reader.fieldnames:
@@ -161,7 +159,7 @@ class NorthbeamClient:
         total_rows = 0
         for row in reader:
             if total_rows < sample_size:
-                rows.append(dict(row))
+                rows.append(row)
             total_rows += 1
 
         return {"data": rows, "total_rows": total_rows, "columns": list(reader.fieldnames)}

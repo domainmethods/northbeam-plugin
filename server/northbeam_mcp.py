@@ -53,7 +53,7 @@ async def _list_spend(
                 page_size=page_size,
                 fetch_all=fetch_all,
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=(",", ":"))
     except NorthbeamAuthError:
         return (
             "Authentication failed. Your NORTHBEAM_API_KEY or NORTHBEAM_CLIENT_ID "

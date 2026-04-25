@@ -1,3 +1,4 @@
+import json
 import httpx
 import pytest
 import respx
@@ -5,7 +6,7 @@ from server.northbeam_mcp import _list_spend, _check_connection
 
 
 @pytest.mark.asyncio
-async def test_list_spend_tool_returns_formatted_json(config, sample_spend_response):
+async def test_list_spend_tool_returns_valid_json(config, sample_spend_response):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
             return_value=httpx.Response(200, json=sample_spend_response)
@@ -16,8 +17,9 @@ async def test_list_spend_tool_returns_formatted_json(config, sample_spend_respo
             date="2026-04-20",
         )
 
-    assert '"platform_name": "Facebook"' in result
-    assert '"total_count": 1' in result
+    parsed = json.loads(result)
+    assert parsed["data"][0]["platform_name"] == "Facebook"
+    assert parsed["total_count"] == 1
 
 
 @pytest.mark.asyncio

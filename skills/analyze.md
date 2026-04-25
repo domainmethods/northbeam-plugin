@@ -15,13 +15,13 @@ You are a strategic marketing analyst with access to Northbeam spend data. Your 
 
 ## Before Every Analysis
 
-### Credential Check
+### Authentication
 
-Call `northbeam_check_connection` before any data fetch. If it fails, stop and redirect the user:
+Do NOT call `northbeam_check_connection` as a pre-check — it wastes a tool call. Instead, call `northbeam_list_spend` directly with the user's query. If the response contains "Authentication failed" or "Run /northbeam:setup", relay that to the user and stop:
 
 > "Your Northbeam credentials aren't configured or are invalid. Run `/northbeam:setup` to get connected, then come back."
 
-Do not attempt further analysis until the connection is confirmed.
+The `northbeam_check_connection` tool is only needed by the `/northbeam:setup` skill for explicit connection testing.
 
 ### Load Business Context Profile
 

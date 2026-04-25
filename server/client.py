@@ -100,6 +100,7 @@ class NorthbeamClient:
         path: str,
         *,
         params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if self._http is None:
             raise RuntimeError("NorthbeamClient must be used as an async context manager")
@@ -107,7 +108,7 @@ class NorthbeamClient:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
-                response = await self._http.request(method, path, params=params)
+                response = await self._http.request(method, path, params=params, json=json)
             except httpx.RequestError as e:
                 last_error = NorthbeamAPIError(f"Network error: {e}")
                 if attempt < MAX_RETRIES - 1:

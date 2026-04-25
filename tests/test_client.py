@@ -281,3 +281,23 @@ async def test_200_with_non_json_body_raises_api_error(config):
         async with NorthbeamClient(config) as client:
             with pytest.raises(Exception, match="Invalid JSON response"):
                 await client.list_spend(date="2026-04-20")
+
+
+async def test_request_with_retry_sends_json_body(config):
+    request_body = {"date_start": "2026-04-14", "metrics": ["revenue"]}
+    response_body = {"export_id": "exp-123"}
+
+    with respx.mock:
+        route = respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(200, json=response_body)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client._request_with_retry(
+                "POST", "exports/data-export", json=request_body
+            )
+
+    assert result == response_body
+    assert route.called
+    sent = route.calls[0].request
+    assert sent.headers["content-type"] == "application/json"

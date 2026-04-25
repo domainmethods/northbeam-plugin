@@ -2,7 +2,7 @@ import httpx
 import pytest
 import respx
 from mcp.server.fastmcp.exceptions import ToolError
-from server.northbeam_mcp import _list_spend, _check_connection
+from server.northbeam_mcp import _list_spend, _check_connection, _list_options
 
 
 async def test_list_spend_tool_returns_dict(config, sample_spend_response):
@@ -108,3 +108,46 @@ async def test_list_spend_missing_config_raises_tool_error(monkeypatch):
 
     with pytest.raises(ToolError, match="Authentication failed"):
         await _list_spend(config=None, date="2026-04-20")
+
+
+async def test_list_options_returns_combined_metadata(config, sample_export_options):
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(200, json=sample_export_options["breakdowns"])
+        )
+        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json=sample_export_options["metrics"])
+        )
+        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json=sample_export_options["attribution_models"])
+        )
+
+        result = await _list_options(config=config)
+
+    assert "breakdowns" in result
+    assert "metrics" in result
+    assert "attribution_models" in result
+
+
+async def test_list_options_unwraps_exception_group_auth_error(config):
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(401, json={"message": "Bad key"})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json={"data": []})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json={"data": []})
+        )
+
+        with pytest.raises(ToolError, match="Authentication failed"):
+            await _list_options(config=config)
+
+
+async def test_list_options_missing_config_raises_tool_error(monkeypatch):
+    monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
+    monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)
+
+    with pytest.raises(ToolError, match="Authentication failed"):
+        await _list_options(config=None)

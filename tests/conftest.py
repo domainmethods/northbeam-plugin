@@ -42,3 +42,12 @@ def sample_spend_response(sample_spend_record):
         "total_pages": 1,
         "total_count": 1,
     }
+
+
+@pytest.fixture
+def sample_export_options():
+    return {
+        "breakdowns": {"data": [{"id": "platform", "name": "Platform"}]},
+        "metrics": {"data": [{"id": "revenue", "name": "Revenue"}]},
+        "attribution_models": {"data": [{"id": "northbeam_custom__va", "name": "NB Custom VA"}]},
+    }

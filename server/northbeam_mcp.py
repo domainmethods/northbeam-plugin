@@ -130,11 +130,40 @@ async def northbeam_list_spend(
     )
 
 
+async def _list_options(config: NorthbeamConfig | None = None) -> dict[str, Any]:
+    """Fetch available breakdowns, metrics, and attribution models."""
+    try:
+        if config is None:
+            config = load_config()
+        async with NorthbeamClient(config) as client:
+            return await client.list_export_options()
+    except (NorthbeamAuthError, NorthbeamConfigError):
+        raise ToolError(AUTH_ERROR_MSG) from None
+    except ExceptionGroup as eg:
+        if any(isinstance(e, (NorthbeamAuthError, NorthbeamConfigError)) for e in eg.exceptions):
+            raise ToolError(AUTH_ERROR_MSG) from None
+        logger.error("list_options error: %r", eg)
+        raise ToolError(f"Error fetching export options: {eg.exceptions[0]}") from None
+    except ToolError:
+        raise
+    except Exception as e:
+        logger.error("list_options error: %s", e)
+        raise ToolError(f"Error fetching export options: {e}")
+
+
 @mcp.tool()
 async def northbeam_check_connection() -> str:
     """Check Northbeam API connectivity. Validates credentials and reports
     the environment (prod/uat) and which ad platforms are visible."""
     return await _check_connection()
+
+
+@mcp.tool()
+async def northbeam_list_options() -> dict[str, Any]:
+    """List available breakdowns, metrics, and attribution models
+    for the Northbeam Data Export API. Use this to discover valid
+    parameter values before calling northbeam_data_export."""
+    return await _list_options()
 
 
 if __name__ == "__main__":

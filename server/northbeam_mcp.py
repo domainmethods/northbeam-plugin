@@ -16,6 +16,11 @@ logger = logging.getLogger("northbeam-mcp")
 
 mcp = FastMCP("northbeam")
 
+AUTH_ERROR_MSG = (
+    "Authentication failed. Your NORTHBEAM_API_KEY or NORTHBEAM_CLIENT_ID "
+    "may be missing or invalid. Run /northbeam:setup to check credentials."
+)
+
 
 async def _list_spend(
     config: NorthbeamConfig | None = None,
@@ -48,10 +53,7 @@ async def _list_spend(
                 fetch_all=fetch_all,
             )
     except (NorthbeamAuthError, NorthbeamConfigError):
-        raise ToolError(
-            "Authentication failed. Your NORTHBEAM_API_KEY or NORTHBEAM_CLIENT_ID "
-            "may be missing or invalid. Run /northbeam:setup to check credentials."
-        )
+        raise ToolError(AUTH_ERROR_MSG)
     except ToolError:
         raise
     except Exception as e:

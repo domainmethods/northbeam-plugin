@@ -363,13 +363,13 @@ Compare performance to known DTC/Ecommerce industry benchmarks.
 
 ### DTC/Ecommerce Benchmark Ranges
 
-| Platform   | CPC Range    | CPM Range    | CTR Range    |
-|------------|--------------|--------------|--------------|
-| Facebook   | $0.50–$1.50  | $8–$20       | 0.8%–2.0%   |
-| Google     | $1.00–$3.00  | $2–$8        | 2.0%–5.0%   |
-| TikTok     | $0.30–$1.00  | $6–$15       | 0.5%–1.5%   |
-| Pinterest  | $0.20–$0.80  | $5–$12       | 0.3%–0.8%   |
-| Email      | N/A          | N/A          | 1.5%–3.5%   |
+| Platform | Typical CPC | Typical CPM | Typical CTR |
+|----------|-------------|-------------|-------------|
+| Facebook/Meta | $0.50–$2.00 | $8–$15 | 1.0–2.0% |
+| Google (Search) | $1.00–$3.00 | $15–$40 | 3.0–6.0% |
+| TikTok | $0.30–$1.50 | $6–$12 | 0.8–2.0% |
+| Pinterest | $0.50–$1.50 | $5–$10 | 0.5–1.5% |
+| Email (Klaviyo etc.) | $0.10–$0.50 | $2–$5 | 2.0–5.0% |
 
 ### Usage Rules
 

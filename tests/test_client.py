@@ -228,3 +228,15 @@ async def test_list_spend_429_exhaustion_raises_clear_error(config):
         async with NorthbeamClient(config) as client:
             with pytest.raises(Exception, match="Rate limited.*429.*max retries"):
                 await client.list_spend(date="2026-04-20")
+
+
+async def test_error_body_response_field_normalized_to_message(config):
+    """Northbeam API docs use 'response' instead of 'message' in error bodies."""
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(401, json={"status": "error", "response": "Invalid credentials"})
+        )
+
+        async with NorthbeamClient(config) as client:
+            with pytest.raises(Exception, match="Invalid credentials"):
+                await client.list_spend(date="2026-04-20")

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import json
 import logging
 import sys
 from datetime import date as date_type, timedelta
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
 from server.client import NorthbeamClient, NorthbeamAuthError
 from server.config import NorthbeamConfig, load_config
@@ -32,13 +33,13 @@ async def _list_spend(
     page: int = 1,
     page_size: int = 1000,
     fetch_all: bool = False,
-) -> str:
+) -> dict[str, Any]:
     """Query Northbeam spend records with optional filters and pagination."""
     try:
         if config is None:
             config = _get_config()
         async with NorthbeamClient(config) as client:
-            result = await client.list_spend(
+            return await client.list_spend(
                 date=date,
                 date_start=date_start,
                 date_end=date_end,
@@ -50,15 +51,16 @@ async def _list_spend(
                 page_size=page_size,
                 fetch_all=fetch_all,
             )
-        return json.dumps(result, separators=(",", ":"))
     except NorthbeamAuthError:
-        return (
+        raise ToolError(
             "Authentication failed. Your NORTHBEAM_API_KEY or NORTHBEAM_CLIENT_ID "
             "may be invalid. Run /northbeam:setup to check credentials."
         )
+    except ToolError:
+        raise
     except Exception as e:
         logger.error("list_spend error: %s", e)
-        return f"Error querying Northbeam: {e}"
+        raise ToolError(f"Error querying Northbeam: {e}")
 
 
 async def _check_connection(config: NorthbeamConfig | None = None) -> str:
@@ -82,13 +84,15 @@ async def _check_connection(config: NorthbeamConfig | None = None) -> str:
         return "\n".join(lines)
 
     except NorthbeamAuthError:
-        return (
-            "Status: Not connected — authentication failed.\n"
+        raise ToolError(
+            "Status: Not connected — authentication failed. "
             "Run /northbeam:setup for configuration instructions."
         )
+    except ToolError:
+        raise
     except Exception as e:
         logger.error("check_connection error: %s", e)
-        return f"Status: Not connected — {e}"
+        raise ToolError(f"Status: Not connected — {e}")
 
 
 @mcp.tool()
@@ -103,7 +107,7 @@ async def northbeam_list_spend(
     page: int = 1,
     page_size: int = 1000,
     fetch_all: bool = False,
-) -> str:
+) -> dict[str, Any]:
     """Query Northbeam spend records. Returns spend, clicks, and impressions data
     filterable by date range, platform, campaign, adset, and ad. Use fetch_all=true
     to auto-paginate and retrieve all matching records.

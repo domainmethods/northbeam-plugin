@@ -1,10 +1,11 @@
-import json
 import httpx
+import pytest
 import respx
+from mcp.server.fastmcp.exceptions import ToolError
 from server.northbeam_mcp import _list_spend, _check_connection
 
 
-async def test_list_spend_tool_returns_valid_json(config, sample_spend_response):
+async def test_list_spend_tool_returns_dict(config, sample_spend_response):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
             return_value=httpx.Response(200, json=sample_spend_response)
@@ -15,9 +16,9 @@ async def test_list_spend_tool_returns_valid_json(config, sample_spend_response)
             date="2026-04-20",
         )
 
-    parsed = json.loads(result)
-    assert parsed["data"][0]["platform_name"] == "Facebook"
-    assert parsed["total_count"] == 1
+    assert isinstance(result, dict)
+    assert result["data"][0]["platform_name"] == "Facebook"
+    assert result["total_count"] == 1
 
 
 async def test_list_spend_tool_with_date_range(config, sample_spend_response):
@@ -37,16 +38,14 @@ async def test_list_spend_tool_with_date_range(config, sample_spend_response):
     assert params["date_end"] == "2026-04-20"
 
 
-async def test_list_spend_tool_auth_error_returns_message(config):
+async def test_list_spend_tool_auth_error_raises_tool_error(config):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
             return_value=httpx.Response(401, json={"message": "Bad key"})
         )
 
-        result = await _list_spend(config=config, date="2026-04-20")
-
-    assert "Authentication failed" in result
-    assert "/northbeam:setup" in result
+        with pytest.raises(ToolError, match="Authentication failed"):
+            await _list_spend(config=config, date="2026-04-20")
 
 
 async def test_check_connection_success(config):
@@ -80,22 +79,19 @@ async def test_check_connection_success(config):
     assert "TikTok" in result
 
 
-async def test_check_connection_auth_failure(config):
+async def test_check_connection_auth_failure_raises_tool_error(config):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
             return_value=httpx.Response(401, json={"message": "Bad key"})
         )
 
-        result = await _check_connection(config=config)
+        with pytest.raises(ToolError, match="Not connected"):
+            await _check_connection(config=config)
 
-    assert "not connected" in result.lower() or "failed" in result.lower()
 
-
-async def test_list_spend_missing_config_returns_setup_message(monkeypatch):
+async def test_list_spend_missing_config_raises_tool_error(monkeypatch):
     monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
     monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)
 
-    result = await _list_spend(config=None, date="2026-04-20")
-
-    assert "Error querying Northbeam" in result
-    assert "NORTHBEAM_API_KEY" in result
+    with pytest.raises(ToolError, match="Error querying Northbeam"):
+        await _list_spend(config=None, date="2026-04-20")

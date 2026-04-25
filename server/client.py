@@ -154,6 +154,9 @@ class NorthbeamClient:
     @staticmethod
     def _parse_body(response: httpx.Response) -> dict[str, Any]:
         try:
-            return response.json()
+            body = response.json()
         except ValueError:
             return {"message": response.text}
+        if "message" not in body and "response" in body:
+            body["message"] = body["response"]
+        return body

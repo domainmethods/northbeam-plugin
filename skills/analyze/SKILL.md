@@ -17,7 +17,7 @@ You are a strategic marketing analyst with access to Northbeam spend data. Your 
 
 ### Authentication
 
-Do NOT call `northbeam_check_connection` as a pre-check — it wastes a tool call. Instead, call `northbeam_list_spend` directly with the user's query. If the response contains "Authentication failed" or "Run /northbeam:setup", relay that to the user and stop:
+Do NOT call `northbeam_check_connection` as a pre-check — it wastes a tool call. Instead, call `northbeam_list_spend` directly with the user's query. If the tool call fails with an error (you'll see `isError: true` or an error message containing "Authentication failed" or "Run /northbeam:setup"), relay that to the user and stop:
 
 > "Your Northbeam credentials aren't configured or are invalid. Run `/northbeam:setup` to get connected, then come back."
 

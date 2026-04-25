@@ -3,6 +3,7 @@ name: setup
 description: Check Northbeam API credentials, configure connection, and set up business context profile. Use when first connecting to Northbeam or troubleshooting authentication issues.
 allowed-tools: mcp__northbeam__northbeam_check_connection, mcp__northbeam__northbeam_list_spend, Read, Write
 user-invocable: true
+disable-model-invocation: true
 ---
 
 # Northbeam Setup
@@ -22,7 +23,10 @@ Call the `northbeam_check_connection` tool.
    - Navigate to **Settings → API Keys**
    - Copy the **API Key** and **Client ID**
 
-2. Tell them to add the credentials to their Claude settings. Provide this exact JSON block for them to add to `~/.claude/settings.json` under the `"env"` key:
+2. Tell them to configure the plugin. The plugin's `userConfig` should have prompted for these values when the plugin was enabled. If the credentials are missing or incorrect, they can re-configure by running:
+   - `/plugins` → select `northbeam` → reconfigure
+
+   Alternatively, they can add credentials manually to `~/.claude/settings.json` under the `"env"` key:
 
 ```json
 {

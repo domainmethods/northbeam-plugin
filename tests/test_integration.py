@@ -1,7 +1,7 @@
-import json
 import httpx
 import pytest
 import respx
+from mcp.server.fastmcp.exceptions import ToolError
 from server.config import NorthbeamConfig
 from server.northbeam_mcp import _list_spend, _check_connection
 
@@ -57,14 +57,13 @@ async def test_full_query_with_multiple_platforms(config):
             return_value=httpx.Response(200, json=response_body)
         )
 
-        result_str = await _list_spend(
+        result = await _list_spend(
             config=config,
             date_start="2026-04-14",
             date_end="2026-04-20",
             fetch_all=True,
         )
 
-    result = json.loads(result_str)
     assert result["total_count"] == 5
     assert len(result["data"]) == 5
 
@@ -98,14 +97,13 @@ async def test_full_pagination_across_pages(config):
             httpx.Response(200, json=page2),
         ]
 
-        result_str = await _list_spend(
+        result = await _list_spend(
             config=config,
             date_start="2026-04-14",
             date_end="2026-04-20",
             fetch_all=True,
         )
 
-    result = json.loads(result_str)
     assert len(result["data"]) == 4
     assert result["pages_fetched"] == 2
 
@@ -133,13 +131,11 @@ async def test_check_connection_shows_all_platforms(config):
     assert "Google" in result
 
 
-async def test_connection_failure_is_graceful(config):
+async def test_connection_failure_raises_tool_error(config):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
             return_value=httpx.Response(401, json={"message": "Invalid API key"})
         )
 
-        result = await _check_connection(config=config)
-
-    assert "Not connected" in result
-    assert "failed" in result.lower()
+        with pytest.raises(ToolError, match="Not connected"):
+            await _check_connection(config=config)

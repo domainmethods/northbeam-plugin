@@ -1,4 +1,3 @@
-import os
 import pytest
 from server.config import load_config, NorthbeamConfig
 

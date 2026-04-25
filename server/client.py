@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 from typing import Any
 
 import httpx
@@ -11,6 +13,8 @@ MAX_RETRIES = 3
 INITIAL_BACKOFF = 0.5
 EXPORT_POLL_INTERVAL = 2.0
 EXPORT_POLL_TIMEOUT = 60.0
+SAMPLE_SIZE = 20
+DOWNLOAD_TIMEOUT = 60.0
 
 
 class NorthbeamAuthError(Exception):
@@ -138,6 +142,36 @@ class NorthbeamClient:
             raise NorthbeamAPIError(
                 f"Export {export_id} timed out after {EXPORT_POLL_TIMEOUT}s"
             )
+
+    async def download_export_csv(
+        self, download_url: str, sample_size: int = SAMPLE_SIZE
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as http:
+            async with http.stream("GET", download_url) as response:
+                response.raise_for_status()
+                lines = response.aiter_lines()
+
+                try:
+                    header_line = await anext(lines)
+                except StopAsyncIteration:
+                    return {"data": [], "total_rows": 0}
+
+                if not header_line:
+                    return {"data": [], "total_rows": 0}
+
+                header = next(csv.reader(io.StringIO(header_line)))
+                rows: list[dict[str, str]] = []
+                total_rows = 0
+
+                async for line in lines:
+                    if not line:
+                        continue
+                    if total_rows < sample_size:
+                        values = next(csv.reader(io.StringIO(line)))
+                        rows.append(dict(zip(header, values)))
+                    total_rows += 1
+
+        return {"data": rows, "total_rows": total_rows}
 
     async def _request_with_retry(
         self,

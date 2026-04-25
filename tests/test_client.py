@@ -417,3 +417,94 @@ async def test_request_with_retry_sends_json_body(config):
     assert route.called
     sent = route.calls[0].request
     assert sent.headers["content-type"] == "application/json"
+
+
+async def test_download_export_csv_parses_csv(config):
+    csv_content = "platform,revenue,roas\nFacebook,1000.50,3.2\nTikTok,500.25,2.1\n"
+
+    with respx.mock:
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.download_export_csv(
+                "https://storage.example.com/export.csv"
+            )
+
+    assert result["total_rows"] == 2
+    assert len(result["data"]) == 2
+    assert result["data"][0]["platform"] == "Facebook"
+    assert result["data"][0]["revenue"] == "1000.50"
+    assert result["data"][1]["platform"] == "TikTok"
+
+
+async def test_download_export_csv_bounds_memory_with_sample(config):
+    header = "platform,revenue\n"
+    rows = "".join(f"Platform{i},{i * 100}\n" for i in range(200))
+    csv_content = header + rows
+
+    with respx.mock:
+        respx.get("https://storage.example.com/big.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.download_export_csv(
+                "https://storage.example.com/big.csv", sample_size=5
+            )
+
+    assert result["total_rows"] == 200
+    assert len(result["data"]) == 5
+    assert result["data"][0]["platform"] == "Platform0"
+    assert result["data"][4]["platform"] == "Platform4"
+
+
+async def test_download_export_csv_handles_empty_csv(config):
+    csv_content = "platform,revenue\n"
+
+    with respx.mock:
+        respx.get("https://storage.example.com/empty.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.download_export_csv(
+                "https://storage.example.com/empty.csv"
+            )
+
+    assert result["total_rows"] == 0
+    assert result["data"] == []
+
+
+async def test_download_export_csv_handles_no_content(config):
+    with respx.mock:
+        respx.get("https://storage.example.com/nothing.csv").mock(
+            return_value=httpx.Response(200, text="")
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.download_export_csv(
+                "https://storage.example.com/nothing.csv"
+            )
+
+    assert result["total_rows"] == 0
+    assert result["data"] == []
+
+
+async def test_download_export_csv_does_not_send_auth_headers(config):
+    csv_content = "platform,revenue\nFacebook,1000\n"
+
+    with respx.mock:
+        route = respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        async with NorthbeamClient(config) as client:
+            await client.download_export_csv(
+                "https://storage.example.com/export.csv"
+            )
+
+    sent_headers = dict(route.calls[0].request.headers)
+    assert "authorization" not in sent_headers
+    assert "data-client-id" not in sent_headers

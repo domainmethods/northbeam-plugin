@@ -89,6 +89,19 @@ async def test_check_connection_auth_failure_raises_tool_error(config):
             await _check_connection(config=config)
 
 
+async def test_check_connection_handles_empty_response(config):
+    """API returning empty JSON object should not crash."""
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        result = await _check_connection(config=config)
+
+    assert "connected" in result.lower()
+    assert "0" in result
+
+
 async def test_list_spend_missing_config_raises_tool_error(monkeypatch):
     monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
     monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)

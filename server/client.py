@@ -80,16 +80,18 @@ class NorthbeamClient:
         while True:
             params["page"] = current_page
             result = await self._request_with_retry("GET", "spend", params=params)
-            all_data.extend(result["data"])
-            if current_page >= min(result.get("total_pages", 1), MAX_PAGES):
+            all_data.extend(result.get("data") or [])
+            total_pages = result.get("total_pages") or 1
+            if current_page >= min(total_pages, MAX_PAGES):
                 break
             current_page += 1
 
+        total_pages = result.get("total_pages") or 1
         return {
             "data": all_data,
-            "total_count": result.get("total_count", len(all_data)),
+            "total_count": result.get("total_count") or len(all_data),
             "pages_fetched": current_page,
-            "capped": current_page >= MAX_PAGES and result.get("total_pages", 1) > MAX_PAGES,
+            "capped": current_page >= MAX_PAGES and total_pages > MAX_PAGES,
         }
 
     async def _request_with_retry(
@@ -153,7 +155,10 @@ class NorthbeamClient:
                 body = self._parse_body(response)
                 raise NorthbeamAPIError(f"HTTP {response.status_code}: {body.get('message', 'Unknown error')}")
 
-            return response.json()
+            try:
+                return response.json()
+            except ValueError:
+                raise NorthbeamAPIError(f"Invalid JSON response: {response.text}")
 
         raise last_error or NorthbeamAPIError("Request failed after retries")
 

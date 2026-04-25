@@ -269,3 +269,15 @@ async def test_base_url_resolves_correctly(config):
 
         assert route.called
         assert str(route.calls[0].request.url).startswith("https://api.northbeam.io/v1/spend")
+
+
+async def test_200_with_non_json_body_raises_api_error(config):
+    """A WAF or proxy may return 200 OK with HTML instead of JSON."""
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, text="<html>OK</html>")
+        )
+
+        async with NorthbeamClient(config) as client:
+            with pytest.raises(Exception, match="Invalid JSON response"):
+                await client.list_spend(date="2026-04-20")

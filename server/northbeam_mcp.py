@@ -72,8 +72,11 @@ async def _check_connection(config: NorthbeamConfig | None = None) -> str:
         async with NorthbeamClient(config) as client:
             result = await client.list_spend(date=yesterday, page_size=1000)
 
-        platforms = sorted(set(r["platform_name"] for r in result["data"]))
-        record_count = result["total_count"]
+        platforms = sorted(set(
+            r.get("platform_name") for r in (result.get("data") or [])
+            if r.get("platform_name")
+        ))
+        record_count = result.get("total_count") or 0
 
         lines = [
             "Status: Connected",

@@ -1,0 +1,16 @@
+{
+  "monthly_budgets": {
+    "Facebook": 0,
+    "Google": 0,
+    "TikTok": 0
+  },
+  "targets": {
+    "Facebook": { "cpc": 0, "cpm": 0, "ctr": 0 },
+    "Google": { "cpc": 0, "cpm": 0, "ctr": 0 },
+    "TikTok": { "cpc": 0, "cpm": 0, "ctr": 0 }
+  },
+  "roas_goal": 0,
+  "campaign_naming_pattern": "",
+  "fiscal_month_start": 1,
+  "currency": "USD"
+}

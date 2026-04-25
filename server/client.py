@@ -147,31 +147,24 @@ class NorthbeamClient:
         self, download_url: str, sample_size: int = SAMPLE_SIZE
     ) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as http:
-            async with http.stream("GET", download_url) as response:
-                response.raise_for_status()
-                lines = response.aiter_lines()
+            response = await http.get(download_url)
+            response.raise_for_status()
+            text = response.text
+            if not text.strip():
+                return {"data": [], "total_rows": 0, "columns": []}
 
-                try:
-                    header_line = await anext(lines)
-                except StopAsyncIteration:
-                    return {"data": [], "total_rows": 0, "columns": []}
+        reader = csv.DictReader(io.StringIO(text))
+        if not reader.fieldnames:
+            return {"data": [], "total_rows": 0, "columns": []}
 
-                if not header_line:
-                    return {"data": [], "total_rows": 0, "columns": []}
+        rows: list[dict[str, str]] = []
+        total_rows = 0
+        for row in reader:
+            if total_rows < sample_size:
+                rows.append(dict(row))
+            total_rows += 1
 
-                header = next(csv.reader(io.StringIO(header_line)))
-                rows: list[dict[str, str]] = []
-                total_rows = 0
-
-                async for line in lines:
-                    if not line:
-                        continue
-                    if total_rows < sample_size:
-                        values = next(csv.reader(io.StringIO(line)))
-                        rows.append(dict(zip(header, values)))
-                    total_rows += 1
-
-        return {"data": rows, "total_rows": total_rows, "columns": header}
+        return {"data": rows, "total_rows": total_rows, "columns": list(reader.fieldnames)}
 
     async def _request_with_retry(
         self,

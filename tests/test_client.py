@@ -511,3 +511,22 @@ async def test_download_export_csv_does_not_send_auth_headers(config):
     sent_headers = dict(route.calls[0].request.headers)
     assert "authorization" not in sent_headers
     assert "data-client-id" not in sent_headers
+
+
+async def test_download_export_csv_handles_quoted_newlines(config):
+    csv_content = 'platform,campaign_name,revenue\nFacebook,"Spring\nPromo",1500\nTikTok,Summer,800\n'
+
+    with respx.mock:
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.download_export_csv(
+                "https://storage.example.com/export.csv"
+            )
+
+    assert result["total_rows"] == 2
+    assert len(result["data"]) == 2
+    assert result["data"][0]["campaign_name"] == "Spring\nPromo"
+    assert result["data"][1]["platform"] == "TikTok"

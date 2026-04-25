@@ -1,7 +1,7 @@
 import httpx
 import pytest
 import respx
-from server.client import NorthbeamClient
+from server.client import NorthbeamClient, NorthbeamAuthError
 
 
 async def test_list_spend_sends_auth_headers(config, sample_spend_response):
@@ -281,6 +281,51 @@ async def test_200_with_non_json_body_raises_api_error(config):
         async with NorthbeamClient(config) as client:
             with pytest.raises(Exception, match="Invalid JSON response"):
                 await client.list_spend(date="2026-04-20")
+
+
+async def test_list_export_options_returns_combined_metadata(config):
+    breakdowns_resp = {"data": [{"id": "platform", "name": "Platform"}]}
+    metrics_resp = {"data": [{"id": "revenue", "name": "Revenue"}]}
+    models_resp = {"data": [{"id": "northbeam_custom__va", "name": "Northbeam Custom VA"}]}
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(200, json=breakdowns_resp)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json=metrics_resp)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json=models_resp)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.list_export_options()
+
+    assert result["breakdowns"] == breakdowns_resp
+    assert result["metrics"] == metrics_resp
+    assert result["attribution_models"] == models_resp
+
+
+async def test_list_export_options_auth_error_propagates(config):
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(401, json={"message": "Bad key"})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json={"data": []})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json={"data": []})
+        )
+
+        async with NorthbeamClient(config) as client:
+            with pytest.raises(ExceptionGroup) as exc_info:
+                await client.list_export_options()
+
+    assert any(
+        isinstance(e, NorthbeamAuthError) for e in exc_info.value.exceptions
+    )
 
 
 async def test_request_with_retry_sends_json_body(config):

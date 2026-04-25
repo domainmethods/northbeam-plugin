@@ -94,6 +94,23 @@ class NorthbeamClient:
             "capped": current_page >= MAX_PAGES and total_pages > MAX_PAGES,
         }
 
+    async def list_export_options(self) -> dict[str, Any]:
+        async with asyncio.TaskGroup() as tg:
+            bd_task = tg.create_task(
+                self._request_with_retry("GET", "exports/breakdowns")
+            )
+            met_task = tg.create_task(
+                self._request_with_retry("GET", "exports/metrics")
+            )
+            mod_task = tg.create_task(
+                self._request_with_retry("GET", "exports/attribution-models")
+            )
+        return {
+            "breakdowns": bd_task.result(),
+            "metrics": met_task.result(),
+            "attribution_models": mod_task.result(),
+        }
+
     async def _request_with_retry(
         self,
         method: str,

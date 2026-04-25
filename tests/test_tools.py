@@ -1,11 +1,9 @@
 import json
 import httpx
-import pytest
 import respx
 from server.northbeam_mcp import _list_spend, _check_connection
 
 
-@pytest.mark.asyncio
 async def test_list_spend_tool_returns_valid_json(config, sample_spend_response):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -22,7 +20,6 @@ async def test_list_spend_tool_returns_valid_json(config, sample_spend_response)
     assert parsed["total_count"] == 1
 
 
-@pytest.mark.asyncio
 async def test_list_spend_tool_with_date_range(config, sample_spend_response):
     with respx.mock:
         route = respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -40,7 +37,6 @@ async def test_list_spend_tool_with_date_range(config, sample_spend_response):
     assert params["date_end"] == "2026-04-20"
 
 
-@pytest.mark.asyncio
 async def test_list_spend_tool_auth_error_returns_message(config):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -53,7 +49,6 @@ async def test_list_spend_tool_auth_error_returns_message(config):
     assert "/northbeam:setup" in result
 
 
-@pytest.mark.asyncio
 async def test_check_connection_success(config):
     response_body = {
         "data": [
@@ -85,7 +80,6 @@ async def test_check_connection_success(config):
     assert "TikTok" in result
 
 
-@pytest.mark.asyncio
 async def test_check_connection_auth_failure(config):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -97,7 +91,6 @@ async def test_check_connection_auth_failure(config):
     assert "not connected" in result.lower() or "failed" in result.lower()
 
 
-@pytest.mark.asyncio
 async def test_list_spend_missing_config_returns_setup_message(monkeypatch):
     monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
     monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)

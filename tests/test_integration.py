@@ -39,7 +39,6 @@ def _make_spend_records(count: int, platform: str = "Facebook") -> list[dict]:
     return records
 
 
-@pytest.mark.asyncio
 async def test_full_query_with_multiple_platforms(config):
     fb_records = _make_spend_records(3, "Facebook")
     tt_records = _make_spend_records(2, "TikTok")
@@ -73,7 +72,6 @@ async def test_full_query_with_multiple_platforms(config):
     assert platforms == {"Facebook", "TikTok"}
 
 
-@pytest.mark.asyncio
 async def test_full_pagination_across_pages(config):
     page1_records = _make_spend_records(2, "Facebook")
     page2_records = _make_spend_records(2, "TikTok")
@@ -112,7 +110,6 @@ async def test_full_pagination_across_pages(config):
     assert result["pages_fetched"] == 2
 
 
-@pytest.mark.asyncio
 async def test_check_connection_shows_all_platforms(config):
     records = _make_spend_records(2, "Facebook") + _make_spend_records(1, "Google")
     response_body = {
@@ -136,7 +133,6 @@ async def test_check_connection_shows_all_platforms(config):
     assert "Google" in result
 
 
-@pytest.mark.asyncio
 async def test_connection_failure_is_graceful(config):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(

@@ -4,7 +4,6 @@ import respx
 from server.client import NorthbeamClient
 
 
-@pytest.mark.asyncio
 async def test_list_spend_sends_auth_headers(config, sample_spend_response):
     with respx.mock:
         route = respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -20,7 +19,6 @@ async def test_list_spend_sends_auth_headers(config, sample_spend_response):
         assert request.headers["Data-Client-ID"] == "test-client"
 
 
-@pytest.mark.asyncio
 async def test_list_spend_passes_query_params(config, sample_spend_response):
     with respx.mock:
         route = respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -42,7 +40,6 @@ async def test_list_spend_passes_query_params(config, sample_spend_response):
         assert params["campaign_id"] == "camp-1"
 
 
-@pytest.mark.asyncio
 async def test_list_spend_returns_parsed_response(config, sample_spend_response):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -57,7 +54,6 @@ async def test_list_spend_returns_parsed_response(config, sample_spend_response)
     assert result["data"][0]["platform_name"] == "Facebook"
 
 
-@pytest.mark.asyncio
 async def test_list_spend_fetch_all_paginates(config, sample_spend_record):
     page1 = {
         "data": [sample_spend_record],
@@ -90,7 +86,6 @@ async def test_list_spend_fetch_all_paginates(config, sample_spend_record):
     assert result["total_count"] == 2
 
 
-@pytest.mark.asyncio
 async def test_list_spend_401_raises_auth_error(config):
     error_body = {"message": "Authentication failed."}
 
@@ -104,7 +99,6 @@ async def test_list_spend_401_raises_auth_error(config):
                 await client.list_spend(date="2026-04-20")
 
 
-@pytest.mark.asyncio
 async def test_list_spend_422_raises_validation_error(config):
     error_body = {
         "message": "Validation error",
@@ -121,7 +115,6 @@ async def test_list_spend_422_raises_validation_error(config):
                 await client.list_spend(date="bad-date")
 
 
-@pytest.mark.asyncio
 async def test_list_spend_retries_on_500(config, sample_spend_response):
     with respx.mock:
         route = respx.get("https://api.northbeam.io/v1/spend")
@@ -137,7 +130,6 @@ async def test_list_spend_retries_on_500(config, sample_spend_response):
     assert route.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_list_spend_retries_on_429_with_retry_after(config, sample_spend_response):
     with respx.mock:
         route = respx.get("https://api.northbeam.io/v1/spend")
@@ -153,7 +145,21 @@ async def test_list_spend_retries_on_429_with_retry_after(config, sample_spend_r
     assert route.call_count == 2
 
 
-@pytest.mark.asyncio
+async def test_list_spend_429_with_http_date_retry_after_falls_back(config, sample_spend_response):
+    with respx.mock:
+        route = respx.get("https://api.northbeam.io/v1/spend")
+        route.side_effect = [
+            httpx.Response(429, headers={"Retry-After": "Fri, 31 Dec 2026 23:59:59 GMT"}, json={"message": "Rate limited"}),
+            httpx.Response(200, json=sample_spend_response),
+        ]
+
+        async with NorthbeamClient(config) as client:
+            result = await client.list_spend(date="2026-04-20")
+
+    assert len(result["data"]) == 1
+    assert route.call_count == 2
+
+
 async def test_list_spend_gives_up_after_max_retries(config):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -165,7 +171,6 @@ async def test_list_spend_gives_up_after_max_retries(config):
                 await client.list_spend(date="2026-04-20")
 
 
-@pytest.mark.asyncio
 async def test_list_spend_retries_on_network_error(config, sample_spend_response):
     with respx.mock:
         route = respx.get("https://api.northbeam.io/v1/spend")
@@ -181,7 +186,6 @@ async def test_list_spend_retries_on_network_error(config, sample_spend_response
     assert route.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_list_spend_network_error_gives_up_after_max_retries(config):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -193,7 +197,6 @@ async def test_list_spend_network_error_gives_up_after_max_retries(config):
                 await client.list_spend(date="2026-04-20")
 
 
-@pytest.mark.asyncio
 async def test_list_spend_handles_non_json_500_response(config):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -205,7 +208,6 @@ async def test_list_spend_handles_non_json_500_response(config):
                 await client.list_spend(date="2026-04-20")
 
 
-@pytest.mark.asyncio
 async def test_list_spend_handles_html_403_response(config):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -217,7 +219,6 @@ async def test_list_spend_handles_html_403_response(config):
                 await client.list_spend(date="2026-04-20")
 
 
-@pytest.mark.asyncio
 async def test_list_spend_429_exhaustion_raises_clear_error(config):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(

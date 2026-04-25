@@ -127,7 +127,10 @@ class NorthbeamClient:
 
             if response.status_code == 429:
                 if attempt < MAX_RETRIES - 1:
-                    retry_after = float(response.headers.get("Retry-After", INITIAL_BACKOFF))
+                    try:
+                        retry_after = float(response.headers.get("Retry-After", INITIAL_BACKOFF))
+                    except ValueError:
+                        retry_after = INITIAL_BACKOFF * (2 ** attempt)
                     await asyncio.sleep(retry_after)
                     continue
                 raise NorthbeamAPIError("Rate limited (429) after max retries")

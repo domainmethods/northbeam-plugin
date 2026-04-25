@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+import json
+import logging
+import sys
+from datetime import date, timedelta
+
+from mcp.server.fastmcp import FastMCP
+
+from server.client import NorthbeamClient, NorthbeamAuthError
+from server.config import NorthbeamConfig, load_config
+
+logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+logger = logging.getLogger("northbeam-mcp")
+
+mcp = FastMCP("northbeam")
+
+
+def _get_config() -> NorthbeamConfig:
+    return load_config()
+
+
+async def _list_spend(
+    config: NorthbeamConfig | None = None,
+    date: str | None = None,
+    date_start: str | None = None,
+    date_end: str | None = None,
+    platform_account_id: str | None = None,
+    campaign_id: str | None = None,
+    adset_id: str | None = None,
+    ad_id: str | None = None,
+    page: int = 1,
+    page_size: int = 1000,
+    fetch_all: bool = False,
+) -> str:
+    """Query Northbeam spend records with optional filters and pagination."""
+    if config is None:
+        config = _get_config()
+
+    try:
+        async with NorthbeamClient(config) as client:
+            result = await client.list_spend(
+                date=date,
+                date_start=date_start,
+                date_end=date_end,
+                platform_account_id=platform_account_id,
+                campaign_id=campaign_id,
+                adset_id=adset_id,
+                ad_id=ad_id,
+                page=page,
+                page_size=page_size,
+                fetch_all=fetch_all,
+            )
+        return json.dumps(result, indent=2)
+    except NorthbeamAuthError:
+        return (
+            "Authentication failed. Your NORTHBEAM_API_KEY or NORTHBEAM_CLIENT_ID "
+            "may be invalid. Run /northbeam:setup to check credentials."
+        )
+    except Exception as e:
+        logger.error("list_spend error: %s", e)
+        return f"Error querying Northbeam: {e}"
+
+
+async def _check_connection(config: NorthbeamConfig | None = None) -> str:
+    """Check Northbeam API connectivity and report visible platforms."""
+    if config is None:
+        config = _get_config()
+
+    try:
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        async with NorthbeamClient(config) as client:
+            result = await client.list_spend(date=yesterday, page_size=1000)
+
+        platforms = sorted(set(r["platform_name"] for r in result["data"]))
+        record_count = result["total_count"]
+
+        lines = [
+            f"Status: Connected",
+            f"Environment: {config.environment}",
+            f"Records found (yesterday): {record_count}",
+            f"Platforms visible: {', '.join(platforms) if platforms else 'none (no data for yesterday)'}",
+        ]
+        return "\n".join(lines)
+
+    except NorthbeamAuthError:
+        return (
+            "Status: Not connected — authentication failed.\n"
+            "Run /northbeam:setup for configuration instructions."
+        )
+    except Exception as e:
+        logger.error("check_connection error: %s", e)
+        return f"Status: Not connected — {e}"
+
+
+@mcp.tool()
+async def northbeam_list_spend(
+    date: str | None = None,
+    date_start: str | None = None,
+    date_end: str | None = None,
+    platform_account_id: str | None = None,
+    campaign_id: str | None = None,
+    adset_id: str | None = None,
+    ad_id: str | None = None,
+    page: int = 1,
+    page_size: int = 1000,
+    fetch_all: bool = False,
+) -> str:
+    """Query Northbeam spend records. Returns spend, clicks, and impressions data
+    filterable by date range, platform, campaign, adset, and ad. Use fetch_all=true
+    to auto-paginate and retrieve all matching records.
+
+    Date parameters: provide 'date' for a single day, or 'date_start'+'date_end'
+    for a range. Format: YYYY-MM-DD.
+    """
+    return await _list_spend(
+        date=date,
+        date_start=date_start,
+        date_end=date_end,
+        platform_account_id=platform_account_id,
+        campaign_id=campaign_id,
+        adset_id=adset_id,
+        ad_id=ad_id,
+        page=page,
+        page_size=page_size,
+        fetch_all=fetch_all,
+    )
+
+
+@mcp.tool()
+async def northbeam_check_connection() -> str:
+    """Check Northbeam API connectivity. Validates credentials and reports
+    the environment (prod/uat) and which ad platforms are visible."""
+    return await _check_connection()
+
+
+if __name__ == "__main__":
+    mcp.run(transport="stdio")

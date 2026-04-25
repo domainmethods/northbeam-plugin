@@ -93,3 +93,14 @@ async def test_check_connection_auth_failure(config):
         result = await _check_connection(config=config)
 
     assert "not connected" in result.lower() or "failed" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_list_spend_missing_config_returns_setup_message(monkeypatch):
+    monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
+    monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)
+
+    result = await _list_spend(config=None, date="2026-04-20")
+
+    assert "Error querying Northbeam" in result
+    assert "NORTHBEAM_API_KEY" in result

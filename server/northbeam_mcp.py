@@ -34,10 +34,9 @@ async def _list_spend(
     fetch_all: bool = False,
 ) -> str:
     """Query Northbeam spend records with optional filters and pagination."""
-    if config is None:
-        config = _get_config()
-
     try:
+        if config is None:
+            config = _get_config()
         async with NorthbeamClient(config) as client:
             result = await client.list_spend(
                 date=date,
@@ -64,10 +63,9 @@ async def _list_spend(
 
 async def _check_connection(config: NorthbeamConfig | None = None) -> str:
     """Check Northbeam API connectivity and report visible platforms."""
-    if config is None:
-        config = _get_config()
-
     try:
+        if config is None:
+            config = _get_config()
         yesterday = (date_type.today() - timedelta(days=1)).isoformat()
         async with NorthbeamClient(config) as client:
             result = await client.list_spend(date=yesterday, page_size=1000)

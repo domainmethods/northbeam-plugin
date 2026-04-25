@@ -54,21 +54,19 @@ class NorthbeamClient:
         page_size: int = 1000,
         fetch_all: bool = False,
     ) -> dict[str, Any]:
-        params: dict[str, Any] = {"page": page, "page_size": page_size}
-        if date is not None:
-            params["date"] = date
-        if date_start is not None:
-            params["date_start"] = date_start
-        if date_end is not None:
-            params["date_end"] = date_end
-        if platform_account_id is not None:
-            params["platform_account_id"] = platform_account_id
-        if campaign_id is not None:
-            params["campaign_id"] = campaign_id
-        if adset_id is not None:
-            params["adset_id"] = adset_id
-        if ad_id is not None:
-            params["ad_id"] = ad_id
+        params: dict[str, Any] = {
+            k: v for k, v in {
+                "page": page,
+                "page_size": page_size,
+                "date": date,
+                "date_start": date_start,
+                "date_end": date_end,
+                "platform_account_id": platform_account_id,
+                "campaign_id": campaign_id,
+                "adset_id": adset_id,
+                "ad_id": ad_id,
+            }.items() if v is not None
+        }
 
         if not fetch_all:
             return await self._request_with_retry("GET", "/spend", params=params)

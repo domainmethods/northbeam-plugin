@@ -4,7 +4,7 @@ A Claude Code plugin for marketing analytics via the Northbeam API. Covers both 
 
 ## Prerequisites
 
-- [Claude Code](https://claude.ai/code) — CLI, Desktop (Mac/Windows), VS Code, or JetBrains (plugins are not supported in the web app)
+- [Claude Code](https://claude.ai/code) — CLI, Desktop (Mac/Windows), or VS Code extension (JetBrains and web app do not support plugins)
 - [uv](https://docs.astral.sh/uv/) — Python package manager (handles Python and dependencies automatically)
 - Northbeam account with API access (API Key + Client ID from **Settings > API Keys**)
 

@@ -1,4 +1,4 @@
-# Northbeam Spend Intelligence
+# Northbeam Claude Code Plugin
 
 A Claude Code plugin for marketing analytics via the Northbeam API. Covers both spend data (impressions, clicks, CPC/CPM) and outcome metrics (revenue, ROAS, CAC, conversions) through the Spend and Data Export APIs. Designed for business users and data analysts.
 

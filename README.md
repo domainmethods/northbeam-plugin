@@ -10,6 +10,14 @@ A Claude Code plugin for marketing analytics via the Northbeam API. Covers both 
 
 ## Installation
 
+### 1. Add the marketplace
+
+```bash
+/plugin marketplace add domainmethods/northbeam-plugin
+```
+
+### 2. Install the plugin
+
 ```bash
 /plugin install northbeam@domainmethods/northbeam-plugin
 ```

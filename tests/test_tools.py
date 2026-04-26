@@ -428,3 +428,38 @@ async def test_data_export_truncates_high_cardinality(
     assert result["summary"]["returned_rows"] == MAX_RESULT_ROWS
     assert result["summary"]["truncated"] is True
     assert len(result["data"]) == MAX_RESULT_ROWS
+
+
+async def test_data_export_empty_breakdowns_aggregates_totals(
+    config,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+
+    csv_content = "revenue,roas\n1000,3.0\n500,2.0\n"
+
+    with respx.mock:
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(200, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        result = await _data_export(
+            config=config,
+            date_start="2026-04-14",
+            date_end="2026-04-20",
+            metrics=["revenue", "roas"],
+            breakdowns=[],
+        )
+
+    assert len(result["data"]) == 1
+    assert result["data"][0]["revenue"] == 1500.0
+    assert result["data"][0]["roas"] == 5.0
+    assert result["data"][0]["_row_count"] == 2

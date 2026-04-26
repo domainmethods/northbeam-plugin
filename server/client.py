@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
-import tempfile
+import io
 from typing import Any
 
 import httpx
@@ -145,21 +145,17 @@ class NorthbeamClient:
     async def download_export_csv(
         self, download_url: str
     ) -> dict[str, Any]:
-        with tempfile.TemporaryFile("w+", newline="", encoding="utf-8") as tmp:
-            async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as http:
-                async with http.stream("GET", download_url) as response:
-                    response.raise_for_status()
-                    async for chunk in response.aiter_text():
-                        tmp.write(chunk)
+        async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as http:
+            response = await http.get(download_url)
+            response.raise_for_status()
 
-            tmp.seek(0)
-            reader = csv.DictReader(tmp)
-            columns = list(reader.fieldnames or [])
-            if not columns:
-                return {"data": [], "total_rows": 0, "columns": []}
+        reader = csv.DictReader(io.StringIO(response.text))
+        columns = list(reader.fieldnames or [])
+        if not columns:
+            return {"data": [], "total_rows": 0, "columns": []}
 
-            rows = list(reader)
-            return {"data": rows, "total_rows": len(rows), "columns": columns}
+        rows = list(reader)
+        return {"data": rows, "total_rows": len(rows), "columns": columns}
 
     async def _request_with_retry(
         self,

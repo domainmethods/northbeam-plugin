@@ -263,12 +263,9 @@ async def _data_export(
             raw_rows = csv_result["data"]
             total_rows = csv_result["total_rows"]
 
-        if effective_breakdowns and effective_metrics and raw_rows:
-            aggregated = _aggregate_export_rows(
-                raw_rows, effective_breakdowns, effective_metrics
-            )
-        else:
-            aggregated = raw_rows
+        aggregated = _aggregate_export_rows(
+            raw_rows, effective_breakdowns, effective_metrics
+        ) if raw_rows else []
 
         total_groups = len(aggregated)
         truncated = total_groups > MAX_RESULT_ROWS

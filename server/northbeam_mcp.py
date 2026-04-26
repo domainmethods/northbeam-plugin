@@ -272,7 +272,7 @@ async def _data_export(
 
         total_groups = len(aggregated)
         truncated = total_groups > MAX_RESULT_ROWS
-        data = aggregated[:MAX_RESULT_ROWS] if truncated else aggregated
+        data = aggregated[:MAX_RESULT_ROWS]
 
         return {
             "summary": {
@@ -328,7 +328,8 @@ async def northbeam_data_export(
     Use northbeam_list_options to discover valid metric/breakdown/model values.
 
     Returns aggregated data grouped by the requested breakdowns with summed
-    metrics. All rows are included (no truncation).
+    metrics. Results capped at 200 rows (sorted by first metric descending).
+    Check summary.truncated — if true, suggest narrower breakdowns.
     """
     return await _data_export(
         date_start=date_start,

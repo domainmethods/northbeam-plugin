@@ -23,21 +23,10 @@ Call the `northbeam_check_connection` tool.
    - Navigate to **Settings → API Keys**
    - Copy the **API Key** and **Client ID**
 
-2. Tell them to configure the plugin. The plugin's `userConfig` should have prompted for these values when the plugin was enabled. If the credentials are missing or incorrect, they can re-configure by running:
+2. Tell them to configure the plugin. The plugin's `userConfig` should have prompted for these values when the plugin was enabled (stored securely in the system keychain). If the credentials are missing or incorrect, they can re-configure by running:
    - `/plugins` → select `northbeam` → reconfigure
 
-   Alternatively, they can add credentials manually to `~/.claude/settings.json` under the `"env"` key:
-
-```json
-{
-  "env": {
-    "NORTHBEAM_API_KEY": "paste-your-api-key-here",
-    "NORTHBEAM_CLIENT_ID": "paste-your-client-id-here"
-  }
-}
-```
-
-3. After they confirm the credentials are saved, tell them to restart Claude Code (or reload the plugin) for the env vars to take effect, then re-run `/northbeam:setup`.
+3. After they confirm the credentials are saved, tell them to restart Claude Code (or reload the plugin) for the changes to take effect, then re-run `/northbeam:setup`.
 
 ## Step 2: Validate Connection
 

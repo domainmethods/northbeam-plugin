@@ -23,6 +23,8 @@ AUTH_ERROR_MSG = (
     "may be missing or invalid. Run /northbeam:setup to check credentials."
 )
 
+MAX_RESULT_ROWS = 200
+
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -268,17 +270,23 @@ async def _data_export(
         else:
             aggregated = raw_rows
 
+        total_groups = len(aggregated)
+        truncated = total_groups > MAX_RESULT_ROWS
+        data = aggregated[:MAX_RESULT_ROWS] if truncated else aggregated
+
         return {
             "summary": {
                 "total_raw_rows": total_rows,
-                "aggregated_groups": len(aggregated),
+                "aggregated_groups": total_groups,
+                "returned_rows": len(data),
+                "truncated": truncated,
                 "date_range": {"start": date_start, "end": date_end},
                 "attribution_model": attribution_model,
                 "attribution_window": attribution_window,
                 "breakdowns": effective_breakdowns,
                 "metrics": effective_metrics,
             },
-            "data": aggregated,
+            "data": data,
         }
 
     except (NorthbeamAuthError, NorthbeamConfigError):

@@ -4,7 +4,7 @@ import respx
 from mcp.server.fastmcp.exceptions import ToolError
 from server.northbeam_mcp import (
     _list_spend, _check_connection, _list_options, _data_export,
-    _aggregate_export_rows, _enrich_spend_rows,
+    _aggregate_export_rows, _enrich_spend_rows, MAX_RESULT_ROWS,
 )
 
 import server.client as client_module
@@ -188,6 +188,8 @@ async def test_data_export_full_flow(
 
     assert result["summary"]["total_raw_rows"] == 2
     assert result["summary"]["aggregated_groups"] == 2
+    assert result["summary"]["returned_rows"] == 2
+    assert result["summary"]["truncated"] is False
     assert result["summary"]["date_range"] == {"start": "2026-04-14", "end": "2026-04-20"}
     assert result["summary"]["attribution_model"] == "northbeam_custom__va"
     assert len(result["data"]) == 2
@@ -388,3 +390,41 @@ async def test_list_spend_returns_enriched_data(config, sample_spend_response):
     assert "cpm" in row
     assert "ctr" in row
     assert row["cpc"] == round(150.0 / 180, 2)
+
+
+async def test_data_export_truncates_high_cardinality(
+    config,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+
+    header = "ad_id,revenue\n"
+    rows_csv = "".join(f"ad-{i},{i * 10}\n" for i in range(300))
+    csv_content = header + rows_csv
+
+    with respx.mock:
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(200, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        result = await _data_export(
+            config=config,
+            date_start="2026-04-14",
+            date_end="2026-04-20",
+            metrics=["revenue"],
+            breakdowns=["ad_id"],
+        )
+
+    assert result["summary"]["total_raw_rows"] == 300
+    assert result["summary"]["aggregated_groups"] == 300
+    assert result["summary"]["returned_rows"] == MAX_RESULT_ROWS
+    assert result["summary"]["truncated"] is True
+    assert len(result["data"]) == MAX_RESULT_ROWS

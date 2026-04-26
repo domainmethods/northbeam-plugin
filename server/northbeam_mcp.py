@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from collections import defaultdict
@@ -21,6 +22,26 @@ AUTH_ERROR_MSG = (
     "Authentication failed. Your NORTHBEAM_API_KEY or NORTHBEAM_CLIENT_ID "
     "may be missing or invalid. Run /northbeam:setup to check credentials."
 )
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _enrich_spend_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for row in rows:
+        spend = _safe_float(row.get("spend"))
+        clicks = _safe_float(row.get("clicks"))
+        impressions = _safe_float(row.get("impressions"))
+
+        row["cpc"] = round(spend / clicks, 2) if clicks > 0 else None
+        row["cpm"] = round((spend / impressions) * 1000, 2) if impressions > 0 else None
+        row["ctr"] = round((clicks / impressions) * 100, 2) if impressions > 0 else None
+
+    return rows
 
 
 async def _list_spend(
@@ -63,6 +84,9 @@ async def _list_spend(
             ]
             result["data"] = filtered
             result["total_count"] = len(filtered)
+
+        if result.get("data"):
+            _enrich_spend_rows(result["data"])
 
         return result
     except (NorthbeamAuthError, NorthbeamConfigError):
@@ -123,14 +147,15 @@ async def northbeam_list_spend(
     page_size: int = 1000,
     fetch_all: bool = False,
 ) -> dict[str, Any]:
-    """Query Northbeam spend records. Returns spend, clicks, and impressions data
-    filterable by date range, platform, campaign, adset, and ad. Use fetch_all=true
-    to auto-paginate and retrieve all matching records.
+    """Query Northbeam spend records. Returns spend, clicks, impressions, and
+    pre-computed efficiency metrics (CPC, CPM, CTR) per row.
+    Filterable by date range, platform, campaign, adset, and ad.
+    Use fetch_all=true to auto-paginate and retrieve all matching records.
 
     Date parameters: provide 'date' for a single day, or 'date_start'+'date_end'
     for a range. Format: YYYY-MM-DD.
 
-    platform_name filters results client-side (case-insensitive). Example: 'Facebook'.
+    platform_name filters results server-side (case-insensitive). Example: 'Facebook'.
     """
     return await _list_spend(
         date=date,
@@ -183,10 +208,7 @@ def _aggregate_export_rows(
         group = groups[key]
         group["_count"] += 1
         for m in metrics:
-            try:
-                group[m] = group.get(m, 0.0) + float(row.get(m, 0))
-            except (ValueError, TypeError):
-                pass
+            group[m] = group.get(m, 0.0) + _safe_float(row.get(m))
 
     aggregated: list[dict[str, Any]] = []
     for key, group in groups.items():
@@ -305,6 +327,190 @@ async def northbeam_data_export(
         date_end=date_end,
         metrics=metrics,
         breakdowns=breakdowns,
+        attribution_model=attribution_model,
+        attribution_window=attribution_window,
+    )
+
+
+def _compute_blended_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    total_spend = sum(_safe_float(r.get("spend")) for r in rows)
+    total_clicks = sum(_safe_float(r.get("clicks")) for r in rows)
+    total_impressions = sum(_safe_float(r.get("impressions")) for r in rows)
+
+    return {
+        "total_spend": round(total_spend, 2),
+        "total_clicks": int(total_clicks),
+        "total_impressions": int(total_impressions),
+        "blended_cpc": round(total_spend / total_clicks, 2) if total_clicks > 0 else None,
+        "blended_cpm": round((total_spend / total_impressions) * 1000, 2) if total_impressions > 0 else None,
+        "blended_ctr": round((total_clicks / total_impressions) * 100, 2) if total_impressions > 0 else None,
+    }
+
+
+def _aggregate_spend_by_platform(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    platforms: dict[str, dict[str, float]] = {}
+
+    for row in rows:
+        platform = row.get("platform_name") or "Unknown"
+        if platform not in platforms:
+            platforms[platform] = {"spend": 0.0, "clicks": 0.0, "impressions": 0.0}
+        p = platforms[platform]
+        p["spend"] += _safe_float(row.get("spend"))
+        p["clicks"] += _safe_float(row.get("clicks"))
+        p["impressions"] += _safe_float(row.get("impressions"))
+
+    result = []
+    for platform, totals in sorted(platforms.items(), key=lambda x: x[1]["spend"], reverse=True):
+        spend = totals["spend"]
+        clicks = totals["clicks"]
+        impressions = totals["impressions"]
+        result.append({
+            "platform": platform,
+            "spend": round(spend, 2),
+            "clicks": int(clicks),
+            "impressions": int(impressions),
+            "cpc": round(spend / clicks, 2) if clicks > 0 else None,
+            "cpm": round((spend / impressions) * 1000, 2) if impressions > 0 else None,
+            "ctr": round((clicks / impressions) * 100, 2) if impressions > 0 else None,
+            "spend_share": None,
+        })
+
+    total_spend = sum(p["spend"] for p in result)
+    if total_spend > 0:
+        for p in result:
+            p["spend_share"] = round((p["spend"] / total_spend) * 100, 1)
+
+    return result
+
+
+async def _run_export_pipeline(
+    client: NorthbeamClient,
+    body: dict[str, Any],
+) -> list[dict[str, Any]]:
+    create_result = await client.create_data_export(body)
+    export_id = create_result.get("export_id")
+    if not export_id:
+        raise ToolError("Northbeam API response missing 'export_id'")
+
+    poll_result = await client.poll_export_result(export_id)
+    download_url = poll_result.get("download_url")
+    if not download_url:
+        raise ToolError("Northbeam API response missing 'download_url'")
+
+    csv_result = await client.download_export_csv(download_url)
+    raw_rows = csv_result["data"]
+
+    if raw_rows:
+        return _aggregate_export_rows(
+            raw_rows,
+            body.get("breakdowns", []),
+            body.get("metrics", []),
+        )
+    return []
+
+
+async def _portfolio_health(
+    config: NorthbeamConfig | None = None,
+    date_start: str = "",
+    date_end: str = "",
+    attribution_model: str = "northbeam_custom__va",
+    attribution_window: str = "7",
+) -> dict[str, Any]:
+    try:
+        if config is None:
+            config = load_config()
+
+        if not date_start or not date_end:
+            today = date_type.today()
+            date_end = date_end or today.isoformat()
+            date_start = date_start or today.replace(day=1).isoformat()
+
+        async with NorthbeamClient(config) as client:
+            spend_task = asyncio.create_task(
+                client.list_spend(
+                    date_start=date_start,
+                    date_end=date_end,
+                    fetch_all=True,
+                )
+            )
+
+            export_body = {
+                "date_start": date_start,
+                "date_end": date_end,
+                "attribution_model": attribution_model,
+                "attribution_window": attribution_window,
+                "breakdowns": ["platform"],
+                "metrics": ["revenue", "roas"],
+            }
+            export_task = asyncio.create_task(
+                _run_export_pipeline(client, export_body)
+            )
+
+            spend_result, export_result = await asyncio.gather(
+                spend_task, export_task, return_exceptions=True
+            )
+
+        if isinstance(spend_result, Exception):
+            if isinstance(spend_result, (NorthbeamAuthError, NorthbeamConfigError)):
+                raise ToolError(AUTH_ERROR_MSG) from None
+            raise ToolError(f"Spend query failed: {spend_result}")
+
+        spend_rows = spend_result.get("data") or []
+        blended = _compute_blended_metrics(spend_rows)
+        by_platform = _aggregate_spend_by_platform(spend_rows)
+
+        outcome_data = None
+        outcome_error = None
+        if isinstance(export_result, Exception):
+            outcome_error = str(export_result)
+        else:
+            outcome_data = export_result
+
+        response: dict[str, Any] = {
+            "summary": {
+                "date_range": {"start": date_start, "end": date_end},
+                "attribution_model": attribution_model,
+                "record_count": len(spend_rows),
+                **blended,
+            },
+            "spend_by_platform": by_platform,
+        }
+
+        if outcome_data is not None:
+            response["outcomes"] = outcome_data
+        if outcome_error is not None:
+            response["outcome_error"] = outcome_error
+
+        return response
+
+    except (NorthbeamAuthError, NorthbeamConfigError):
+        raise ToolError(AUTH_ERROR_MSG) from None
+    except ToolError:
+        raise
+    except Exception as e:
+        logger.error("portfolio_health error: %s", e)
+        raise ToolError(f"Error building portfolio health: {e}")
+
+
+@mcp.tool()
+async def northbeam_portfolio_health(
+    date_start: str = "",
+    date_end: str = "",
+    attribution_model: str = "northbeam_custom__va",
+    attribution_window: str = "7",
+) -> dict[str, Any]:
+    """Get a holistic portfolio health snapshot combining spend efficiency
+    metrics (CPC, CPM, CTR) with outcome metrics (revenue, ROAS).
+
+    Runs spend and data export queries concurrently for faster results.
+    Defaults to month-to-date if no dates provided.
+
+    Returns: blended metrics, per-platform breakdown with spend share,
+    and outcome data aggregated by platform.
+    """
+    return await _portfolio_health(
+        date_start=date_start,
+        date_end=date_end,
         attribution_model=attribution_model,
         attribution_window=attribution_window,
     )

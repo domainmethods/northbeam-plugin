@@ -4,7 +4,7 @@ import respx
 from mcp.server.fastmcp.exceptions import ToolError
 from server.northbeam_mcp import (
     _list_spend, _check_connection, _list_options, _data_export,
-    _aggregate_export_rows,
+    _aggregate_export_rows, _enrich_spend_rows,
 )
 
 import server.client as client_module
@@ -323,3 +323,68 @@ def test_aggregate_export_rows_handles_non_numeric():
 
     assert len(result) == 1
     assert result[0]["revenue"] == 100.0
+
+
+def test_enrich_spend_rows_computes_derived_metrics():
+    rows = [
+        {"spend": 150.0, "clicks": 180, "impressions": 12000},
+        {"spend": 50.0, "clicks": 25, "impressions": 5000},
+    ]
+
+    result = _enrich_spend_rows(rows)
+
+    assert result[0]["cpc"] == round(150.0 / 180, 2)
+    assert result[0]["cpm"] == round((150.0 / 12000) * 1000, 2)
+    assert result[0]["ctr"] == round((180 / 12000) * 100, 2)
+    assert result[1]["cpc"] == round(50.0 / 25, 2)
+    assert result[1]["cpm"] == round((50.0 / 5000) * 1000, 2)
+    assert result[1]["ctr"] == round((25 / 5000) * 100, 2)
+
+
+def test_enrich_spend_rows_handles_zero_clicks():
+    rows = [{"spend": 100.0, "clicks": 0, "impressions": 5000}]
+
+    result = _enrich_spend_rows(rows)
+
+    assert result[0]["cpc"] is None
+    assert result[0]["cpm"] == round((100.0 / 5000) * 1000, 2)
+    assert result[0]["ctr"] == round(0, 2)
+
+
+def test_enrich_spend_rows_handles_zero_impressions():
+    rows = [{"spend": 100.0, "clicks": 50, "impressions": 0}]
+
+    result = _enrich_spend_rows(rows)
+
+    assert result[0]["cpc"] == round(100.0 / 50, 2)
+    assert result[0]["cpm"] is None
+    assert result[0]["ctr"] is None
+
+
+def test_enrich_spend_rows_handles_missing_fields():
+    rows = [{"spend": 100.0}]
+
+    result = _enrich_spend_rows(rows)
+
+    assert result[0]["cpc"] is None
+    assert result[0]["cpm"] is None
+    assert result[0]["ctr"] is None
+
+
+async def test_list_spend_returns_enriched_data(config, sample_spend_response):
+    """Verify _list_spend integrates enrichment — sample has spend=150, clicks=180, impressions=12000."""
+    import httpx
+    import respx
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, json=sample_spend_response)
+        )
+
+        result = await _list_spend(config=config, date="2026-04-20")
+
+    row = result["data"][0]
+    assert "cpc" in row
+    assert "cpm" in row
+    assert "ctr" in row
+    assert row["cpc"] == round(150.0 / 180, 2)

@@ -1,7 +1,7 @@
 ---
 name: analyze
 description: Strategic Northbeam analysis — ad hoc queries, anomaly detection, budget optimization, portfolio health, and outcome metrics (ROAS, revenue, CAC). Use when the user asks about ad spend, marketing performance, budget allocation, campaign efficiency, or return on ad spend.
-allowed-tools: mcp__northbeam__northbeam_list_spend, mcp__northbeam__northbeam_data_export, mcp__northbeam__northbeam_list_options, mcp__northbeam__northbeam_check_connection, Read
+allowed-tools: mcp__northbeam__northbeam_list_spend, mcp__northbeam__northbeam_data_export, mcp__northbeam__northbeam_list_options, mcp__northbeam__northbeam_check_connection, mcp__northbeam__northbeam_portfolio_health, Read
 user-invocable: true
 ---
 
@@ -46,9 +46,9 @@ Choose the right tool based on what the user is asking about:
 
 | User asks about | Tool to use | Why |
 |----------------|-------------|-----|
-| Spend, impressions, clicks, CPC, CPM, CTR | `northbeam_list_spend` | Spend API has these natively |
+| Spend, impressions, clicks, CPC, CPM, CTR | `northbeam_list_spend` | Spend API returns these + pre-computed CPC/CPM/CTR |
 | Revenue, ROAS, CAC, conversions, orders | `northbeam_data_export` | Outcome metrics require Data Export |
-| "How are we doing?" / portfolio health | Both | Spend from list_spend, outcomes from data_export |
+| "How are we doing?" / portfolio health | `northbeam_portfolio_health` | Single call runs spend + export concurrently |
 | Budget pacing | `northbeam_list_spend` | Pacing uses spend data only |
 | Available metrics/breakdowns | `northbeam_list_options` | Discovery before data_export calls |
 
@@ -112,15 +112,13 @@ Thresholds:
 
 ## Derived Metrics
 
-Compute these from raw spend/clicks/impressions when not returned directly by the API:
+`northbeam_list_spend` returns pre-computed efficiency metrics on each row:
 
-- **CPC** = spend / clicks
-- **CPM** = (spend / impressions) × 1000
-- **CTR** = (clicks / impressions) × 100
+- **cpc** — cost per click (spend / clicks)
+- **cpm** — cost per mille (spend / impressions × 1000)
+- **ctr** — click-through rate (clicks / impressions × 100)
 
-Division by zero handling:
-- If clicks = 0: show CPC as "N/A (no clicks)"
-- If impressions = 0: show CPM and CTR as "N/A (no impressions)"
+These are `null` when the denominator is zero (no clicks or no impressions). Display null values as "N/A" with a brief note (e.g., "N/A (no clicks)").
 
 ---
 
@@ -342,22 +340,29 @@ Always append:
 
 Deliver a snapshot of overall marketing portfolio health. Trigger when the user says "how are we doing?", "morning briefing", "portfolio health", "dashboard", or similar open-ended status requests.
 
+### Data Source
+
+Call `northbeam_portfolio_health` — it runs spend and data export concurrently and returns blended metrics, per-platform breakdown with spend share, and outcome data (revenue, ROAS) in one response. Defaults to month-to-date.
+
+For MoM comparison, call it again with the prior month's date range.
+
 ### Dashboard Sections
 
 **1. Spend Overview (MTD + MoM)**
-- Total MTD spend across all channels
+- Total MTD spend across all channels (from `summary.total_spend`)
 - MoM delta (absolute and percent)
-- Top 3 channels by spend with their share of total
+- Top 3 channels by spend with their share of total (from `spend_by_platform`)
 
 **2. Efficiency Metrics**
-- Blended CPC and CPM across all channels
-- Per-platform CPC and CPM with MoM delta
+- Blended CPC and CPM across all channels (from `summary.blended_cpc`, `summary.blended_cpm`)
+- Per-platform CPC and CPM with MoM delta (from `spend_by_platform[].cpc`, `.cpm`)
 - Flag any platform more than 20% above or below blended average
 
-**2b. Outcome Metrics** *(via northbeam_data_export)*
-- Blended ROAS across all channels (if data available)
+**2b. Outcome Metrics**
+- Blended ROAS across all channels (from `outcomes` array)
 - Per-platform ROAS with MoM delta
 - Flag any platform with ROAS below profile `roas_goal` target
+- If `outcome_error` is present, note that outcome data was unavailable and fall back to spend-only analysis
 
 **3. Budget Pacing** *(only if profile budgets exist)*
 - Pacing status for each channel (over / on track / under)

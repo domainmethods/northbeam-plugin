@@ -23,6 +23,30 @@ AUTH_ERROR_MSG = (
 )
 
 
+def _enrich_spend_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add derived efficiency metrics (CPC, CPM, CTR) to spend rows."""
+    for row in rows:
+        spend = row.get("spend") or 0
+        clicks = row.get("clicks") or 0
+        impressions = row.get("impressions") or 0
+
+        try:
+            spend = float(spend)
+            clicks = float(clicks)
+            impressions = float(impressions)
+        except (ValueError, TypeError):
+            row["cpc"] = None
+            row["cpm"] = None
+            row["ctr"] = None
+            continue
+
+        row["cpc"] = round(spend / clicks, 2) if clicks > 0 else None
+        row["cpm"] = round((spend / impressions) * 1000, 2) if impressions > 0 else None
+        row["ctr"] = round((clicks / impressions) * 100, 2) if impressions > 0 else None
+
+    return rows
+
+
 async def _list_spend(
     config: NorthbeamConfig | None = None,
     date: str | None = None,
@@ -63,6 +87,9 @@ async def _list_spend(
             ]
             result["data"] = filtered
             result["total_count"] = len(filtered)
+
+        if result.get("data"):
+            _enrich_spend_rows(result["data"])
 
         return result
     except (NorthbeamAuthError, NorthbeamConfigError):
@@ -123,14 +150,15 @@ async def northbeam_list_spend(
     page_size: int = 1000,
     fetch_all: bool = False,
 ) -> dict[str, Any]:
-    """Query Northbeam spend records. Returns spend, clicks, and impressions data
-    filterable by date range, platform, campaign, adset, and ad. Use fetch_all=true
-    to auto-paginate and retrieve all matching records.
+    """Query Northbeam spend records. Returns spend, clicks, impressions, and
+    pre-computed efficiency metrics (CPC, CPM, CTR) per row.
+    Filterable by date range, platform, campaign, adset, and ad.
+    Use fetch_all=true to auto-paginate and retrieve all matching records.
 
     Date parameters: provide 'date' for a single day, or 'date_start'+'date_end'
     for a range. Format: YYYY-MM-DD.
 
-    platform_name filters results client-side (case-insensitive). Example: 'Facebook'.
+    platform_name filters results server-side (case-insensitive). Example: 'Facebook'.
     """
     return await _list_spend(
         date=date,
@@ -305,6 +333,33 @@ async def northbeam_data_export(
         date_end=date_end,
         metrics=metrics,
         breakdowns=breakdowns,
+        attribution_model=attribution_model,
+        attribution_window=attribution_window,
+    )
+
+
+from server.portfolio import _portfolio_health
+
+
+@mcp.tool()
+async def northbeam_portfolio_health(
+    date_start: str = "",
+    date_end: str = "",
+    attribution_model: str = "northbeam_custom__va",
+    attribution_window: str = "7",
+) -> dict[str, Any]:
+    """Get a holistic portfolio health snapshot combining spend efficiency
+    metrics (CPC, CPM, CTR) with outcome metrics (revenue, ROAS).
+
+    Runs spend and data export queries concurrently for faster results.
+    Defaults to month-to-date if no dates provided.
+
+    Returns: blended metrics, per-platform breakdown with spend share,
+    and outcome data aggregated by platform.
+    """
+    return await _portfolio_health(
+        date_start=date_start,
+        date_end=date_end,
         attribution_model=attribution_model,
         attribution_window=attribution_window,
     )

@@ -208,10 +208,7 @@ def _aggregate_export_rows(
         group = groups[key]
         group["_count"] += 1
         for m in metrics:
-            try:
-                group[m] = group.get(m, 0.0) + float(row.get(m, 0))
-            except (ValueError, TypeError):
-                pass
+            group[m] = group.get(m, 0.0) + _safe_float(row.get(m))
 
     aggregated: list[dict[str, Any]] = []
     for key, group in groups.items():

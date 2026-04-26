@@ -2,7 +2,10 @@ import httpx
 import pytest
 import respx
 from mcp.server.fastmcp.exceptions import ToolError
-from server.northbeam_mcp import _list_spend, _check_connection, _list_options, _data_export
+from server.northbeam_mcp import (
+    _list_spend, _check_connection, _list_options, _data_export,
+    _aggregate_export_rows,
+)
 
 import server.client as client_module
 
@@ -183,12 +186,14 @@ async def test_data_export_full_flow(
             breakdowns=["platform", "campaign_name"],
         )
 
-    assert result["summary"]["total_rows"] == 2
-    assert result["summary"]["columns"] == ["platform", "campaign_name", "revenue", "roas"]
+    assert result["summary"]["total_raw_rows"] == 2
+    assert result["summary"]["aggregated_groups"] == 2
     assert result["summary"]["date_range"] == {"start": "2026-04-14", "end": "2026-04-20"}
     assert result["summary"]["attribution_model"] == "northbeam_custom__va"
     assert len(result["data"]) == 2
     assert result["data"][0]["platform"] == "Facebook"
+    assert result["data"][0]["revenue"] == 1500.0
+    assert result["data"][0]["roas"] == 3.2
 
 
 async def test_data_export_auth_error_raises_tool_error(config):
@@ -207,7 +212,7 @@ async def test_data_export_auth_error_raises_tool_error(config):
             )
 
 
-async def test_data_export_adds_truncation_note_for_large_results(
+async def test_data_export_aggregates_by_breakdown(
     config,
     sample_export_create_response,
     sample_export_completed_response,
@@ -216,8 +221,8 @@ async def test_data_export_adds_truncation_note_for_large_results(
     monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
 
     header = "platform,revenue\n"
-    rows_csv = "".join(f"Platform{i},{i * 100}\n" for i in range(50))
-    large_csv = header + rows_csv
+    rows_csv = "Facebook,100\nFacebook,200\nTikTok,50\nTikTok,150\n"
+    csv_content = header + rows_csv
 
     with respx.mock:
         respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
@@ -227,7 +232,7 @@ async def test_data_export_adds_truncation_note_for_large_results(
             return_value=httpx.Response(200, json=sample_export_completed_response)
         )
         respx.get("https://storage.example.com/export.csv").mock(
-            return_value=httpx.Response(200, text=large_csv)
+            return_value=httpx.Response(200, text=csv_content)
         )
 
         result = await _data_export(
@@ -238,6 +243,83 @@ async def test_data_export_adds_truncation_note_for_large_results(
             breakdowns=["platform"],
         )
 
-    assert result["summary"]["total_rows"] == 50
-    assert len(result["data"]) == 20
-    assert "Showing 20 of 50 rows" in result["summary"]["note"]
+    assert result["summary"]["total_raw_rows"] == 4
+    assert result["summary"]["aggregated_groups"] == 2
+    assert len(result["data"]) == 2
+    assert result["data"][0]["platform"] == "Facebook"
+    assert result["data"][0]["revenue"] == 300.0
+    assert result["data"][0]["_row_count"] == 2
+    assert result["data"][1]["platform"] == "TikTok"
+    assert result["data"][1]["revenue"] == 200.0
+
+
+async def test_list_spend_platform_name_filters_results(config):
+    multi_platform_response = {
+        "data": [
+            {"platform_name": "Facebook", "spend": 100, "date": "2026-04-20"},
+            {"platform_name": "TikTok", "spend": 50, "date": "2026-04-20"},
+            {"platform_name": "Facebook", "spend": 200, "date": "2026-04-19"},
+        ],
+        "page": 1,
+        "page_size": 1000,
+        "total_pages": 1,
+        "total_count": 3,
+    }
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, json=multi_platform_response)
+        )
+
+        result = await _list_spend(
+            config=config,
+            date_start="2026-04-19",
+            date_end="2026-04-20",
+            platform_name="facebook",
+        )
+
+    assert len(result["data"]) == 2
+    assert all(r["platform_name"] == "Facebook" for r in result["data"])
+    assert result["total_count"] == 2
+
+
+async def test_list_spend_platform_name_none_returns_all(config, sample_spend_response):
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, json=sample_spend_response)
+        )
+
+        result = await _list_spend(config=config, date="2026-04-20")
+
+    assert len(result["data"]) == 1
+
+
+def test_aggregate_export_rows_sums_metrics():
+    rows = [
+        {"platform": "Facebook", "revenue": "1000", "roas": "3.0"},
+        {"platform": "Facebook", "revenue": "500", "roas": "2.0"},
+        {"platform": "TikTok", "revenue": "800", "roas": "4.0"},
+    ]
+
+    result = _aggregate_export_rows(rows, ["platform"], ["revenue", "roas"])
+
+    assert len(result) == 2
+    fb = next(r for r in result if r["platform"] == "Facebook")
+    tt = next(r for r in result if r["platform"] == "TikTok")
+    assert fb["revenue"] == 1500.0
+    assert fb["roas"] == 5.0
+    assert fb["_row_count"] == 2
+    assert tt["revenue"] == 800.0
+    assert tt["_row_count"] == 1
+
+
+def test_aggregate_export_rows_handles_non_numeric():
+    rows = [
+        {"platform": "Facebook", "revenue": "bad_value"},
+        {"platform": "Facebook", "revenue": "100"},
+    ]
+
+    result = _aggregate_export_rows(rows, ["platform"], ["revenue"])
+
+    assert len(result) == 1
+    assert result[0]["revenue"] == 100.0

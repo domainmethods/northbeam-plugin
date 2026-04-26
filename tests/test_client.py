@@ -440,7 +440,7 @@ async def test_download_export_csv_parses_csv(config):
     assert result["data"][1]["platform"] == "TikTok"
 
 
-async def test_download_export_csv_limits_returned_rows(config):
+async def test_download_export_csv_returns_all_rows(config):
     header = "platform,revenue\n"
     rows = "".join(f"Platform{i},{i * 100}\n" for i in range(200))
     csv_content = header + rows
@@ -452,13 +452,13 @@ async def test_download_export_csv_limits_returned_rows(config):
 
         async with NorthbeamClient(config) as client:
             result = await client.download_export_csv(
-                "https://storage.example.com/big.csv", sample_size=5
+                "https://storage.example.com/big.csv"
             )
 
     assert result["total_rows"] == 200
-    assert len(result["data"]) == 5
+    assert len(result["data"]) == 200
     assert result["data"][0]["platform"] == "Platform0"
-    assert result["data"][4]["platform"] == "Platform4"
+    assert result["data"][199]["platform"] == "Platform199"
 
 
 async def test_download_export_csv_handles_empty_csv(config):

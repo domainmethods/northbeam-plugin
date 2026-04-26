@@ -135,12 +135,12 @@ Answer free-form spend questions using `northbeam_list_spend`.
 | "last week" | date_start = last Monday, date_end = last Sunday |
 | "this month" | date_start = first of current month, date_end = today |
 | "yesterday" | date_start = date_end = yesterday |
-| "Facebook" or "Meta" | Fetch all data, then filter results by `platform_name` in post-processing |
+| "Facebook" or "Meta" | Pass `platform_name="Facebook"` to filter server-side |
 | "by campaign" | Group results by `campaign_name` in your output |
 | "by channel" | Group results by `platform_name` in your output |
 | "top 5" | Sort by spend descending, return first 5 |
 
-**Important:** `northbeam_list_spend` does NOT accept `platform_name` as a query parameter. Always fetch the full dataset and filter client-side. Never pass platform names as API filters.
+**Tip:** `northbeam_list_spend` accepts `platform_name` for server-side filtering (case-insensitive). Use it to avoid fetching irrelevant platforms.
 
 ### Large Result Summarization
 

@@ -13,7 +13,6 @@ MAX_RETRIES = 3
 INITIAL_BACKOFF = 0.5
 EXPORT_POLL_INTERVAL = 2.0
 EXPORT_POLL_TIMEOUT = 60.0
-SAMPLE_SIZE = 20
 DOWNLOAD_TIMEOUT = 60.0
 
 
@@ -144,7 +143,7 @@ class NorthbeamClient:
             ) from e
 
     async def download_export_csv(
-        self, download_url: str, sample_size: int = SAMPLE_SIZE
+        self, download_url: str
     ) -> dict[str, Any]:
         with tempfile.TemporaryFile("w+", newline="", encoding="utf-8") as tmp:
             async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as http:
@@ -159,14 +158,8 @@ class NorthbeamClient:
             if not columns:
                 return {"data": [], "total_rows": 0, "columns": []}
 
-            rows: list[dict[str, str]] = []
-            total_rows = 0
-            for row in reader:
-                if total_rows < sample_size:
-                    rows.append(row)
-                total_rows += 1
-
-            return {"data": rows, "total_rows": total_rows, "columns": columns}
+            rows = list(reader)
+            return {"data": rows, "total_rows": len(rows), "columns": columns}
 
     async def _request_with_retry(
         self,

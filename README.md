@@ -1,45 +1,34 @@
 # Northbeam Claude Code Plugin
 
-A Claude Code plugin for marketing analytics via the Northbeam API. Covers both spend data (impressions, clicks, CPC/CPM) and outcome metrics (revenue, ROAS, CAC, conversions) through the Spend and Data Export APIs. Designed for business users and data analysts.
+A Claude Code plugin for marketing analytics via the Northbeam API. Covers both spend data (impressions, clicks, CPC/CPM) and outcome metrics (revenue, ROAS, CAC, conversions) through the Spend and Data Export APIs.
 
-## What It Does
+## Prerequisites
 
-Ask questions about your marketing performance in natural language:
-
-- "How are we doing?" — portfolio health briefing with spend + outcome metrics
-- "Where should we cut spend?" — efficiency analysis with recommendations
-- "Compare Facebook vs TikTok ROAS for last month" — cross-platform outcome comparison
-- "Any red flags?" — anomaly detection across campaigns and revenue
-- "I have $10K more to spend, where should it go?" — budget allocation with ROAS signals
-- "Which attribution model should I use?" — side-by-side model comparison
+- [Claude Code](https://claude.ai/code) (CLI, Desktop, VS Code, or JetBrains)
+- Python 3.11+
+- Northbeam account with API access (API Key + Client ID from **Settings > API Keys**)
 
 ## Installation
 
-### 1. Install the Plugin
-
 ```bash
-/plugin install northbeam@your-marketplace
+/plugin install northbeam@domainmethods/northbeam-plugin
 ```
 
-### 2. Configure Credentials
+On first enable, Claude Code prompts for your credentials:
 
-Get your API Key and Client ID from the Northbeam dashboard:
-**Settings → API Keys**
+- **NORTHBEAM_API_KEY** — your Northbeam API key
+- **NORTHBEAM_CLIENT_ID** — your Northbeam Client ID
+- **NORTHBEAM_API_ENV** — `prod` (default) or `uat`
 
-Add them to your Claude settings file (`~/.claude/settings.json`):
+Sensitive values are stored in your system keychain. No manual `settings.json` edits needed.
 
-```json
-{
-  "env": {
-    "NORTHBEAM_API_KEY": "your-api-key-here",
-    "NORTHBEAM_CLIENT_ID": "your-client-id-here"
-  }
-}
+### Verify Connection
+
+```
+/northbeam:setup
 ```
 
-### 3. Verify Connection
-
-Run `/northbeam:setup` to verify your credentials and optionally set up your business context profile (budgets, targets, campaign naming conventions).
+This validates your credentials and optionally sets up your business context profile (monthly budgets, KPI targets, campaign naming conventions).
 
 ## Skills
 
@@ -59,10 +48,33 @@ Strategic marketing analysis. Capabilities include:
 - Portfolio health dashboard (spend + outcomes morning briefing)
 - Year-over-year seasonality context
 - Industry benchmarking (DTC/ecommerce ranges)
-- Adaptive output formatting (conversational, tables, CSV, executive summary)
 
-## Requirements
+## MCP Tools
 
-- Python 3.11+
-- Northbeam account with API access
-- Claude Code (Desktop, CLI, VS Code, or JetBrains)
+These tools are available to Claude when the plugin is active:
+
+| Tool | Description |
+|------|-------------|
+| `northbeam_list_spend` | Query spend records with filters (date, platform, campaign, ad) and pagination |
+| `northbeam_data_export` | Run async data exports for outcome metrics (revenue, ROAS, CAC, conversions) |
+| `northbeam_list_options` | Discover available breakdowns, metrics, and attribution models |
+| `northbeam_check_connection` | Validate credentials and report visible platforms |
+
+## Troubleshooting
+
+### Credentials not working
+- Run `/northbeam:setup` to re-check your API key and client ID
+- Verify your credentials in the Northbeam dashboard under **Settings > API Keys**
+
+### MCP server won't start
+- Confirm Python 3.11+ is in your PATH: `python --version`
+- Install dependencies: `pip install httpx mcp`
+- Check for errors: run `claude --debug` and look for MCP initialization failures
+
+### Plugin not loading
+- Run `/plugins` to check plugin status and error messages
+- Try `/reload-plugins` to force a refresh
+
+## License
+
+MIT

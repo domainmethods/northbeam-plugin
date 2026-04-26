@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "northbeam": {
-      "command": "python",
-      "args": ["-m", "server.northbeam_mcp"],
+      "command": "uv",
+      "args": ["run", "python", "-m", "server.northbeam_mcp"],
       "cwd": "${CLAUDE_PLUGIN_ROOT}",
       "env": {
         "NORTHBEAM_API_KEY": "${NORTHBEAM_API_KEY}",

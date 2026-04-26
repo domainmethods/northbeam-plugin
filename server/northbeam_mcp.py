@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections import defaultdict
 from datetime import date as date_type, timedelta
 from typing import Any
 
@@ -27,6 +28,7 @@ async def _list_spend(
     date: str | None = None,
     date_start: str | None = None,
     date_end: str | None = None,
+    platform_name: str | None = None,
     platform_account_id: str | None = None,
     campaign_id: str | None = None,
     adset_id: str | None = None,
@@ -40,7 +42,7 @@ async def _list_spend(
         if config is None:
             config = load_config()
         async with NorthbeamClient(config) as client:
-            return await client.list_spend(
+            result = await client.list_spend(
                 date=date,
                 date_start=date_start,
                 date_end=date_end,
@@ -52,6 +54,17 @@ async def _list_spend(
                 page_size=page_size,
                 fetch_all=fetch_all,
             )
+
+        if platform_name and result.get("data"):
+            needle = platform_name.lower()
+            filtered = [
+                r for r in result["data"]
+                if (r.get("platform_name") or "").lower() == needle
+            ]
+            result["data"] = filtered
+            result["total_count"] = len(filtered)
+
+        return result
     except (NorthbeamAuthError, NorthbeamConfigError):
         raise ToolError(AUTH_ERROR_MSG) from None
     except ToolError:
@@ -101,6 +114,7 @@ async def northbeam_list_spend(
     date: str | None = None,
     date_start: str | None = None,
     date_end: str | None = None,
+    platform_name: str | None = None,
     platform_account_id: str | None = None,
     campaign_id: str | None = None,
     adset_id: str | None = None,
@@ -115,11 +129,14 @@ async def northbeam_list_spend(
 
     Date parameters: provide 'date' for a single day, or 'date_start'+'date_end'
     for a range. Format: YYYY-MM-DD.
+
+    platform_name filters results client-side (case-insensitive). Example: 'Facebook'.
     """
     return await _list_spend(
         date=date,
         date_start=date_start,
         date_end=date_end,
+        platform_name=platform_name,
         platform_account_id=platform_account_id,
         campaign_id=campaign_id,
         adset_id=adset_id,
@@ -151,6 +168,38 @@ async def _list_options(config: NorthbeamConfig | None = None) -> dict[str, Any]
         raise ToolError(f"Error fetching export options: {e}")
 
 
+def _aggregate_export_rows(
+    rows: list[dict[str, str]],
+    breakdowns: list[str],
+    metrics: list[str],
+) -> list[dict[str, Any]]:
+    """Aggregate raw CSV rows by breakdown keys, summing metric values."""
+    groups: dict[tuple, dict[str, Any]] = defaultdict(
+        lambda: {"_count": 0}
+    )
+
+    for row in rows:
+        key = tuple(row.get(b, "") for b in breakdowns)
+        group = groups[key]
+        group["_count"] += 1
+        for m in metrics:
+            try:
+                group[m] = group.get(m, 0.0) + float(row.get(m, 0))
+            except (ValueError, TypeError):
+                pass
+
+    aggregated: list[dict[str, Any]] = []
+    for key, group in groups.items():
+        entry: dict[str, Any] = dict(zip(breakdowns, key))
+        for m in metrics:
+            entry[m] = round(group.get(m, 0.0), 2)
+        entry["_row_count"] = group["_count"]
+        aggregated.append(entry)
+
+    aggregated.sort(key=lambda r: r.get(metrics[0], 0) if metrics else 0, reverse=True)
+    return aggregated
+
+
 async def _data_export(
     config: NorthbeamConfig | None = None,
     date_start: str = "",
@@ -160,18 +209,21 @@ async def _data_export(
     attribution_model: str = "northbeam_custom__va",
     attribution_window: str = "7",
 ) -> dict[str, Any]:
-    """Run a full Data Export: create → poll → download → summarize."""
+    """Run a full Data Export: create → poll → download → aggregate."""
     try:
         if config is None:
             config = load_config()
+        effective_metrics = metrics or []
+        effective_breakdowns = breakdowns or []
+
         async with NorthbeamClient(config) as client:
             body = {
                 "date_start": date_start,
                 "date_end": date_end,
                 "attribution_model": attribution_model,
                 "attribution_window": attribution_window,
-                "breakdowns": breakdowns or [],
-                "metrics": metrics or [],
+                "breakdowns": effective_breakdowns,
+                "metrics": effective_metrics,
             }
             create_result = await client.create_data_export(body)
             export_id = create_result.get("export_id")
@@ -184,25 +236,28 @@ async def _data_export(
                 raise ToolError("Northbeam API response missing 'download_url'")
 
             csv_result = await client.download_export_csv(download_url)
-            rows = csv_result["data"]
+            raw_rows = csv_result["data"]
             total_rows = csv_result["total_rows"]
 
-        result: dict[str, Any] = {
+        if effective_breakdowns and effective_metrics and raw_rows:
+            aggregated = _aggregate_export_rows(
+                raw_rows, effective_breakdowns, effective_metrics
+            )
+        else:
+            aggregated = raw_rows
+
+        return {
             "summary": {
-                "total_rows": total_rows,
+                "total_raw_rows": total_rows,
+                "aggregated_groups": len(aggregated),
                 "date_range": {"start": date_start, "end": date_end},
                 "attribution_model": attribution_model,
                 "attribution_window": attribution_window,
-                "columns": csv_result.get("columns", []),
+                "breakdowns": effective_breakdowns,
+                "metrics": effective_metrics,
             },
-            "data": rows,
+            "data": aggregated,
         }
-        if total_rows > len(rows):
-            result["summary"]["note"] = (
-                f"Showing {len(rows)} of {total_rows} rows. "
-                "Narrow the date range or breakdowns to see all data."
-            )
-        return result
 
     except (NorthbeamAuthError, NorthbeamConfigError):
         raise ToolError(AUTH_ERROR_MSG) from None
@@ -242,8 +297,8 @@ async def northbeam_data_export(
 
     Use northbeam_list_options to discover valid metric/breakdown/model values.
 
-    Returns a summary with row count, date range, columns, and a sample of
-    up to 20 rows. The full dataset is included when total rows ≤ 20.
+    Returns aggregated data grouped by the requested breakdowns with summed
+    metrics. All rows are included (no truncation).
     """
     return await _data_export(
         date_start=date_start,

@@ -3,7 +3,7 @@ import pytest
 import respx
 from mcp.server.fastmcp.exceptions import ToolError
 
-from server.portfolio import (
+from server.northbeam_mcp import (
     _compute_blended_metrics,
     _aggregate_spend_by_platform,
     _portfolio_health,
@@ -202,3 +202,34 @@ async def test_portfolio_health_missing_config(monkeypatch):
 
     with pytest.raises(ToolError, match="Authentication failed"):
         await _portfolio_health(config=None, date_start="2026-04-14", date_end="2026-04-20")
+
+
+def test_compute_blended_metrics_handles_non_numeric():
+    rows = [
+        {"spend": "N/A", "clicks": "bad", "impressions": 5000},
+        {"spend": 100, "clicks": 50, "impressions": "invalid"},
+    ]
+
+    result = _compute_blended_metrics(rows)
+
+    assert result["total_spend"] == 100.0
+    assert result["total_clicks"] == 50
+    assert result["total_impressions"] == 5000
+    assert result["blended_cpc"] == 2.0
+    assert result["blended_cpm"] == 20.0
+    assert result["blended_ctr"] == 1.0
+
+
+def test_aggregate_spend_by_platform_handles_non_numeric():
+    rows = [
+        {"platform_name": "Facebook", "spend": "N/A", "clicks": "bad", "impressions": 5000},
+        {"platform_name": "Facebook", "spend": 100, "clicks": 50, "impressions": 10000},
+    ]
+
+    result = _aggregate_spend_by_platform(rows)
+
+    assert len(result) == 1
+    fb = result[0]
+    assert fb["spend"] == 100.0
+    assert fb["clicks"] == 50
+    assert fb["impressions"] == 15000

@@ -4,8 +4,8 @@ A Claude Code plugin for marketing analytics via the Northbeam API. Covers both 
 
 ## Prerequisites
 
-- [Claude Code](https://claude.ai/code) (CLI, Desktop, VS Code, or JetBrains)
-- Python 3.11+
+- [Claude Code](https://claude.ai/code) — CLI, Desktop (Mac/Windows), VS Code, or JetBrains (plugins are not supported in the web app)
+- [uv](https://docs.astral.sh/uv/) — Python package manager (handles Python and dependencies automatically)
 - Northbeam account with API access (API Key + Client ID from **Settings > API Keys**)
 
 ## Installation
@@ -66,6 +66,7 @@ These tools are available to Claude when the plugin is active:
 | `northbeam_list_spend` | Query spend records with filters (date, platform, campaign, ad) and pagination |
 | `northbeam_data_export` | Run async data exports for outcome metrics (revenue, ROAS, CAC, conversions) |
 | `northbeam_list_options` | Discover available breakdowns, metrics, and attribution models |
+| `northbeam_portfolio_health` | Holistic snapshot — spend efficiency + outcome metrics in one concurrent call |
 | `northbeam_check_connection` | Validate credentials and report visible platforms |
 
 ## Troubleshooting
@@ -75,8 +76,7 @@ These tools are available to Claude when the plugin is active:
 - Verify your credentials in the Northbeam dashboard under **Settings > API Keys**
 
 ### MCP server won't start
-- Confirm Python 3.11+ is in your PATH: `python --version`
-- Install dependencies: `pip install httpx mcp`
+- Confirm `uv` is installed: `uv --version`
 - Check for errors: run `claude --debug` and look for MCP initialization failures
 
 ### Plugin not loading

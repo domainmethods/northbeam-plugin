@@ -12,6 +12,14 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from server.client import NorthbeamClient, NorthbeamAuthError
 from server.config import NorthbeamConfig, NorthbeamConfigError, load_config
+from server.data_export import (
+    breakdown_column_candidates,
+    build_breakdown_value_lookup,
+    build_data_export_payload,
+    extract_download_url,
+    extract_export_id,
+    metric_column_candidates,
+)
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 logger = logging.getLogger("northbeam-mcp")
@@ -31,6 +39,13 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (ValueError, TypeError):
         return default
+
+
+def _first_row_value(row: dict[str, Any], candidates: list[str], default: Any = "") -> Any:
+    for candidate in candidates:
+        if candidate in row:
+            return row.get(candidate)
+    return default
 
 
 def _enrich_spend_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -206,11 +221,15 @@ def _aggregate_export_rows(
     )
 
     for row in rows:
-        key = tuple(row.get(b, "") for b in breakdowns)
+        key = tuple(
+            _first_row_value(row, breakdown_column_candidates(b))
+            for b in breakdowns
+        )
         group = groups[key]
         group["_count"] += 1
         for m in metrics:
-            group[m] = group.get(m, 0.0) + _safe_float(row.get(m))
+            metric_value = _first_row_value(row, metric_column_candidates(m), default=0)
+            group[m] = group.get(m, 0.0) + _safe_float(metric_value)
 
     aggregated: list[dict[str, Any]] = []
     for key, group in groups.items():
@@ -222,6 +241,37 @@ def _aggregate_export_rows(
 
     aggregated.sort(key=lambda r: r.get(metrics[0], 0) if metrics else 0, reverse=True)
     return aggregated
+
+
+async def _build_export_body(
+    client: NorthbeamClient,
+    *,
+    date_start: str,
+    date_end: str,
+    metrics: list[str],
+    breakdowns: list[str],
+    attribution_model: str,
+    attribution_window: str,
+) -> dict[str, Any]:
+    try:
+        breakdown_values = None
+        if breakdowns:
+            options = await client.list_export_options()
+            breakdown_values = build_breakdown_value_lookup(
+                {"breakdowns": options["breakdowns"]}
+            )
+
+        return build_data_export_payload(
+            date_start=date_start,
+            date_end=date_end,
+            metrics=metrics,
+            breakdowns=breakdowns,
+            attribution_model=attribution_model,
+            attribution_window=attribution_window,
+            breakdown_values=breakdown_values,
+        )
+    except ValueError as e:
+        raise ToolError(str(e)) from None
 
 
 async def _data_export(
@@ -241,23 +291,24 @@ async def _data_export(
         effective_breakdowns = breakdowns or []
 
         async with NorthbeamClient(config) as client:
-            body = {
-                "date_start": date_start,
-                "date_end": date_end,
-                "attribution_model": attribution_model,
-                "attribution_window": attribution_window,
-                "breakdowns": effective_breakdowns,
-                "metrics": effective_metrics,
-            }
+            body = await _build_export_body(
+                client,
+                date_start=date_start,
+                date_end=date_end,
+                metrics=effective_metrics,
+                breakdowns=effective_breakdowns,
+                attribution_model=attribution_model,
+                attribution_window=attribution_window,
+            )
             create_result = await client.create_data_export(body)
-            export_id = create_result.get("export_id")
+            export_id = extract_export_id(create_result)
             if not export_id:
-                raise ToolError("Northbeam API response missing 'export_id'")
+                raise ToolError("Northbeam API response missing export id")
 
             poll_result = await client.poll_export_result(export_id)
-            download_url = poll_result.get("download_url")
+            download_url = extract_download_url(poll_result)
             if not download_url:
-                raise ToolError("Northbeam API response missing 'download_url'")
+                raise ToolError("Northbeam API response missing download URL")
 
             csv_result = await client.download_export_csv(download_url)
             raw_rows = csv_result["data"]
@@ -288,6 +339,11 @@ async def _data_export(
 
     except (NorthbeamAuthError, NorthbeamConfigError):
         raise ToolError(AUTH_ERROR_MSG) from None
+    except ExceptionGroup as eg:
+        if any(isinstance(e, (NorthbeamAuthError, NorthbeamConfigError)) for e in eg.exceptions):
+            raise ToolError(AUTH_ERROR_MSG) from None
+        logger.error("data_export error: %r", eg)
+        raise ToolError(f"Error running data export: {eg.exceptions[0]}") from None
     except ToolError:
         raise
     except Exception as e:
@@ -392,25 +448,47 @@ def _aggregate_spend_by_platform(rows: list[dict[str, Any]]) -> list[dict[str, A
 async def _run_export_pipeline(
     client: NorthbeamClient,
     body: dict[str, Any],
+    breakdowns: list[str] | None = None,
+    metrics: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     create_result = await client.create_data_export(body)
-    export_id = create_result.get("export_id")
+    export_id = extract_export_id(create_result)
     if not export_id:
-        raise ToolError("Northbeam API response missing 'export_id'")
+        raise ToolError("Northbeam API response missing export id")
 
     poll_result = await client.poll_export_result(export_id)
-    download_url = poll_result.get("download_url")
+    download_url = extract_download_url(poll_result)
     if not download_url:
-        raise ToolError("Northbeam API response missing 'download_url'")
+        raise ToolError("Northbeam API response missing download URL")
 
     csv_result = await client.download_export_csv(download_url)
     raw_rows = csv_result["data"]
 
     if raw_rows:
+        effective_breakdowns = breakdowns
+        if effective_breakdowns is None:
+            raw_breakdowns = body.get("breakdowns", [])
+            effective_breakdowns = [
+                breakdown.get("key", "")
+                if isinstance(breakdown, dict)
+                else str(breakdown)
+                for breakdown in raw_breakdowns
+            ]
+
+        effective_metrics = metrics
+        if effective_metrics is None:
+            raw_metrics = body.get("metrics", [])
+            effective_metrics = [
+                metric.get("id", "")
+                if isinstance(metric, dict)
+                else str(metric)
+                for metric in raw_metrics
+            ]
+
         return _aggregate_export_rows(
             raw_rows,
-            body.get("breakdowns", []),
-            body.get("metrics", []),
+            effective_breakdowns,
+            effective_metrics,
         )
     return []
 

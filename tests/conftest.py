@@ -47,29 +47,36 @@ def sample_spend_response(sample_spend_record):
 @pytest.fixture
 def sample_export_options():
     return {
-        "breakdowns": {"data": [{"id": "platform", "name": "Platform"}]},
-        "metrics": {"data": [{"id": "revenue", "name": "Revenue"}]},
-        "attribution_models": {"data": [{"id": "northbeam_custom__va", "name": "NB Custom VA"}]},
+        "breakdowns": {
+            "breakdowns": [
+                {"key": "Platform (Northbeam)", "values": ["Facebook Ads", "TikTok"]},
+                {"key": "Category (Northbeam)", "values": ["Email", "Paid - Prospecting"]},
+            ]
+        },
+        "metrics": {"metrics": [{"id": "rev", "label": "Rev"}, {"id": "txns", "label": "Transactions"}]},
+        "attribution_models": {
+            "attribution_models": [{"id": "northbeam_custom__va", "name": "Clicks + Modeled Views"}]
+        },
     }
 
 
 @pytest.fixture
 def sample_export_create_response():
-    return {"export_id": "exp-test-123"}
+    return {"id": "exp-test-123"}
 
 
 @pytest.fixture
 def sample_export_completed_response():
     return {
-        "status": "COMPLETED",
-        "download_url": "https://storage.example.com/export.csv",
+        "status": "SUCCESS",
+        "result": ["https://storage.example.com/export.csv"],
     }
 
 
 @pytest.fixture
 def sample_export_csv():
     return (
-        "platform,campaign_name,revenue,roas\n"
-        "Facebook,FB_Prospecting,1500.00,3.20\n"
+        "breakdown_platform_northbeam,campaign_name,rev,roas\n"
+        "Facebook Ads,FB_Prospecting,1500.00,3.20\n"
         "TikTok,TT_Retargeting,800.00,2.10\n"
     )

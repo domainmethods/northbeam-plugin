@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 import respx
@@ -8,6 +10,18 @@ from server.northbeam_mcp import (
 )
 
 import server.client as client_module
+
+
+def _mock_export_options(sample_export_options):
+    respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+        return_value=httpx.Response(200, json=sample_export_options["breakdowns"])
+    )
+    respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+        return_value=httpx.Response(200, json=sample_export_options["metrics"])
+    )
+    respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+        return_value=httpx.Response(200, json=sample_export_options["attribution_models"])
+    )
 
 
 async def test_list_spend_tool_returns_dict(config, sample_spend_response):
@@ -176,6 +190,7 @@ async def test_list_options_missing_config_raises_tool_error(monkeypatch, tmp_pa
 
 async def test_data_export_full_flow(
     config,
+    sample_export_options,
     sample_export_create_response,
     sample_export_completed_response,
     sample_export_csv,
@@ -184,6 +199,7 @@ async def test_data_export_full_flow(
     monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
 
     with respx.mock:
+        _mock_export_options(sample_export_options)
         respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
             return_value=httpx.Response(200, json=sample_export_create_response)
         )
@@ -198,8 +214,8 @@ async def test_data_export_full_flow(
             config=config,
             date_start="2026-04-14",
             date_end="2026-04-20",
-            metrics=["revenue", "roas"],
-            breakdowns=["platform", "campaign_name"],
+            metrics=["rev", "roas"],
+            breakdowns=["platform"],
         )
 
     assert result["summary"]["total_raw_rows"] == 2
@@ -209,8 +225,8 @@ async def test_data_export_full_flow(
     assert result["summary"]["date_range"] == {"start": "2026-04-14", "end": "2026-04-20"}
     assert result["summary"]["attribution_model"] == "northbeam_custom__va"
     assert len(result["data"]) == 2
-    assert result["data"][0]["platform"] == "Facebook"
-    assert result["data"][0]["revenue"] == 1500.0
+    assert result["data"][0]["platform"] == "Facebook Ads"
+    assert result["data"][0]["rev"] == 1500.0
     assert result["data"][0]["roas"] == 3.2
 
 
@@ -226,23 +242,135 @@ async def test_data_export_auth_error_raises_tool_error(config):
                 date_start="2026-04-14",
                 date_end="2026-04-20",
                 metrics=["revenue"],
+                breakdowns=[],
+            )
+
+
+async def test_data_export_metadata_auth_error_raises_tool_error(config):
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(401, json={"message": "Bad key"})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json={"metrics": []})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json={"attribution_models": []})
+        )
+
+        with pytest.raises(ToolError, match="Authentication failed"):
+            await _data_export(
+                config=config,
+                date_start="2026-04-14",
+                date_end="2026-04-20",
+                metrics=["rev"],
                 breakdowns=["platform"],
             )
 
 
-async def test_data_export_aggregates_by_breakdown(
+async def test_data_export_uses_current_payload_without_breakdowns(
     config,
     sample_export_create_response,
     sample_export_completed_response,
     monkeypatch,
 ):
     monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    csv_content = "transactions,rev\n1.5,100.25\n2.5,200.75\n"
 
-    header = "platform,revenue\n"
-    rows_csv = "Facebook,100\nFacebook,200\nTikTok,50\nTikTok,150\n"
+    with respx.mock:
+        post_route = respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        result = await _data_export(
+            config=config,
+            date_start="2026-05-31",
+            date_end="2026-05-31",
+            metrics=["txns", "rev"],
+            breakdowns=[],
+        )
+
+    sent = json.loads(post_route.calls[0].request.content)
+    assert "date_start" not in sent
+    assert "attribution_model" not in sent
+    assert sent["period_type"] == "FIXED"
+    assert sent["period_options"]["period_starting_at"] == "2026-05-31T00:00:00Z"
+    assert sent["period_options"]["period_ending_at"] == "2026-05-31T23:59:59Z"
+    assert sent["metrics"] == [{"id": "txns"}, {"id": "rev"}]
+    assert result["data"][0]["txns"] == 4.0
+    assert result["data"][0]["rev"] == 301.0
+
+
+async def test_data_export_fetches_breakdown_values_for_non_empty_breakdowns(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    csv_content = "breakdown_platform_northbeam,rev\nFacebook Ads,100\nTikTok,50\n"
+
+    with respx.mock:
+        breakdowns_route = respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(200, json=sample_export_options["breakdowns"])
+        )
+        metrics_route = respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json=sample_export_options["metrics"])
+        )
+        models_route = respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json=sample_export_options["attribution_models"])
+        )
+        post_route = respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        result = await _data_export(
+            config=config,
+            date_start="2026-05-31",
+            date_end="2026-05-31",
+            metrics=["rev"],
+            breakdowns=["platform"],
+        )
+
+    sent = json.loads(post_route.calls[0].request.content)
+    assert sent["breakdowns"] == [
+        {"key": "Platform (Northbeam)", "values": ["Facebook Ads", "TikTok"]}
+    ]
+    assert breakdowns_route.called
+    assert metrics_route.called
+    assert models_route.called
+    assert result["data"][0]["platform"] == "Facebook Ads"
+    assert result["data"][0]["rev"] == 100.0
+
+
+async def test_data_export_aggregates_by_breakdown(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+
+    header = "breakdown_platform_northbeam,rev\n"
+    rows_csv = "Facebook Ads,100\nFacebook Ads,200\nTikTok,50\nTikTok,150\n"
     csv_content = header + rows_csv
 
     with respx.mock:
+        _mock_export_options(sample_export_options)
         respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
             return_value=httpx.Response(200, json=sample_export_create_response)
         )
@@ -257,18 +385,18 @@ async def test_data_export_aggregates_by_breakdown(
             config=config,
             date_start="2026-04-14",
             date_end="2026-04-20",
-            metrics=["revenue"],
+            metrics=["rev"],
             breakdowns=["platform"],
         )
 
     assert result["summary"]["total_raw_rows"] == 4
     assert result["summary"]["aggregated_groups"] == 2
     assert len(result["data"]) == 2
-    assert result["data"][0]["platform"] == "Facebook"
-    assert result["data"][0]["revenue"] == 300.0
+    assert result["data"][0]["platform"] == "Facebook Ads"
+    assert result["data"][0]["rev"] == 300.0
     assert result["data"][0]["_row_count"] == 2
     assert result["data"][1]["platform"] == "TikTok"
-    assert result["data"][1]["revenue"] == 200.0
+    assert result["data"][1]["rev"] == 200.0
 
 
 async def test_list_spend_platform_name_filters_results(config):
@@ -343,6 +471,24 @@ def test_aggregate_export_rows_handles_non_numeric():
     assert result[0]["revenue"] == 100.0
 
 
+def test_aggregate_export_rows_uses_live_metric_and_breakdown_columns():
+    rows = [
+        {"breakdown_platform_northbeam": "Facebook Ads", "transactions": "1.5", "rev": "100"},
+        {"breakdown_platform_northbeam": "Facebook Ads", "transactions": "2.5", "rev": "200"},
+    ]
+
+    result = _aggregate_export_rows(rows, ["platform"], ["txns", "rev"])
+
+    assert result == [
+        {
+            "platform": "Facebook Ads",
+            "txns": 4.0,
+            "rev": 300.0,
+            "_row_count": 2,
+        }
+    ]
+
+
 def test_enrich_spend_rows_computes_derived_metrics():
     rows = [
         {"spend": 150.0, "clicks": 180, "impressions": 12000},
@@ -410,17 +556,19 @@ async def test_list_spend_returns_enriched_data(config, sample_spend_response):
 
 async def test_data_export_truncates_high_cardinality(
     config,
+    sample_export_options,
     sample_export_create_response,
     sample_export_completed_response,
     monkeypatch,
 ):
     monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
 
-    header = "ad_id,revenue\n"
-    rows_csv = "".join(f"ad-{i},{i * 10}\n" for i in range(300))
+    header = "breakdown_platform_northbeam,rev\n"
+    rows_csv = "".join(f"platform-{i},{i * 10}\n" for i in range(300))
     csv_content = header + rows_csv
 
     with respx.mock:
+        _mock_export_options(sample_export_options)
         respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
             return_value=httpx.Response(200, json=sample_export_create_response)
         )
@@ -435,8 +583,8 @@ async def test_data_export_truncates_high_cardinality(
             config=config,
             date_start="2026-04-14",
             date_end="2026-04-20",
-            metrics=["revenue"],
-            breakdowns=["ad_id"],
+            metrics=["rev"],
+            breakdowns=["platform"],
         )
 
     assert result["summary"]["total_raw_rows"] == 300

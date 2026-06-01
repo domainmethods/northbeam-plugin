@@ -25,6 +25,8 @@ check before every query.
   https://northbeam-data-export.readme.io/reference/post_data-export
 - Live API validation on 2026-06-01 confirmed `period_options` uses
   `period_starting_at` and `period_ending_at` ISO datetimes.
+- Live API validation on 2026-06-01 confirmed non-empty `breakdowns` entries
+  require both `key` and `values`.
 
 ---
 
@@ -68,7 +70,13 @@ attribution_model: str = "northbeam_custom__va"
 attribution_window: str = "7"
 ```
 
-The builder converts those into the current Northbeam payload:
+The builder also accepts a `breakdown_values` mapping produced from
+`GET /exports/breakdowns`. Non-empty breakdown requests require this metadata
+because the live API rejects `{"key": "Platform (Northbeam)"}` without a
+`values` array.
+
+The setup sanity probe uses no breakdowns, so its payload is intentionally
+small:
 
 ```python
 {
@@ -79,9 +87,7 @@ The builder converts those into the current Northbeam payload:
         "period_starting_at": "2026-05-31T00:00:00Z",
         "period_ending_at": "2026-05-31T23:59:59Z",
     },
-    "breakdowns": [
-        {"key": "Platform (Northbeam)"}
-    ],
+    "breakdowns": [],
     "options": {
         "export_aggregation": "BREAKDOWN",
         "remove_zero_spend": False,
@@ -106,9 +112,9 @@ The builder converts those into the current Northbeam payload:
 Existing callers pass strings. The builder must support two cases:
 
 - Already-current breakdown keys such as `"Platform (Northbeam)"` become
-  `{"key": "Platform (Northbeam)"}`.
+  `{"key": "Platform (Northbeam)", "values": [...]}`.
 - Legacy aliases used in the current code, such as `"platform"`, map to
-  `"Platform (Northbeam)"`.
+  `"Platform (Northbeam)"` and then use that key's values from metadata.
 
 Keep the first alias map small and explicit:
 
@@ -120,8 +126,23 @@ Keep the first alias map small and explicit:
 }
 ```
 
-If a breakdown string is unknown, pass it through as `{"key": value}` and let
-Northbeam validate it. Do not silently drop user-requested breakdowns.
+If a breakdown string is unknown or has no values in the metadata response,
+raise a user-facing `ToolError` explaining that the requested breakdown is not
+available. Do not silently drop user-requested breakdowns and do not send
+invalid key-only breakdown objects.
+
+Add a helper to convert the metadata response into a lookup:
+
+```python
+{
+    "Platform (Northbeam)": ["Facebook Ads", "Google Ads", "..."],
+    "Category (Northbeam)": ["Other", "Email", "..."],
+}
+```
+
+`_data_export` and `_portfolio_health` must fetch export options before
+building payloads with non-empty breakdowns. They can skip this metadata fetch
+when `breakdowns=[]`.
 
 ### Metric Mapping
 
@@ -311,7 +332,7 @@ Required coverage:
    - ISO `period_starting_at` and `period_ending_at`
    - `attribution_options`
    - metric objects
-   - breakdown objects
+   - breakdown objects with metadata-derived `values`
 2. `_data_export` accepts current create response `id`.
 3. `poll_export_result` returns on `SUCCESS`.
 4. pipeline extracts a URL from current `result: ["..."]`.
@@ -322,6 +343,8 @@ Required coverage:
 7. `_portfolio_health` uses the same current Data Export builder.
 8. Regression test for the old failure: posting top-level `date_start` and
    string metrics must no longer be the expected request shape.
+9. Regression test for the new live finding: non-empty Data Export breakdowns
+   include a `values` array from metadata.
 
 ---
 

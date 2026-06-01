@@ -112,7 +112,7 @@ small:
 Existing callers pass strings. The builder must support two cases:
 
 - Already-current breakdown keys such as `"Platform (Northbeam)"` become
-  `{"key": "Platform (Northbeam)", "values": [...]}`.
+  `{"key": "Platform (Northbeam)", "values": ["Facebook Ads", "Google Ads"]}`.
 - Legacy aliases used in the current code, such as `"platform"`, map to
   `"Platform (Northbeam)"` and then use that key's values from metadata.
 
@@ -135,8 +135,8 @@ Add a helper to convert the metadata response into a lookup:
 
 ```python
 {
-    "Platform (Northbeam)": ["Facebook Ads", "Google Ads", "..."],
-    "Category (Northbeam)": ["Other", "Email", "..."],
+    "Platform (Northbeam)": ["Facebook Ads", "Google Ads"],
+    "Category (Northbeam)": ["Other", "Email"],
 }
 ```
 
@@ -171,8 +171,8 @@ Update `NorthbeamClient` to normalize current and older response shapes:
 
 Accept both:
 
-- current: `{"id": "..."}`
-- older/local tests: `{"export_id": "..."}`
+- current: `{"id": "exp-test-123"}`
+- older/local tests: `{"export_id": "exp-test-123"}`
 
 The client method can keep returning raw JSON, but the pipeline helper should
 extract with:
@@ -245,7 +245,7 @@ Status: Partially connected
 Environment: prod
 Spend API: OK - 0 spend rows for 2026-05-31
 Data Export metadata: OK
-Data Export API: Failed - Validation error: ...
+Data Export API: Failed - Validation error: metrics.0: bad
 Note: credentials work, but outcome metrics are not usable until Data Export is fixed.
 ```
 
@@ -335,7 +335,7 @@ Required coverage:
    - breakdown objects with metadata-derived `values`
 2. `_data_export` accepts current create response `id`.
 3. `poll_export_result` returns on `SUCCESS`.
-4. pipeline extracts a URL from current `result: ["..."]`.
+4. pipeline extracts a URL from current `result: ["https://storage.example.com/export.csv"]`.
 5. `_check_connection` reports connected when spend rows are zero but the tiny
    outcome export returns revenue/transactions.
 6. `_check_connection` reports partially connected when Data Export validation

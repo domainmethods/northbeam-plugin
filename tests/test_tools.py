@@ -505,7 +505,8 @@ async def test_data_export_full_flow(
     assert result["summary"]["returned_rows"] == 2
     assert result["summary"]["truncated"] is False
     assert result["summary"]["date_range"] == {"start": "2026-04-14", "end": "2026-04-20"}
-    assert result["summary"]["attribution_model"] == "northbeam_custom__va"
+    assert result["summary"]["attribution_model"] == "northbeam_custom"
+    assert result["summary"]["attribution_window"] == "1"
     assert len(result["data"]) == 2
     assert result["data"][0]["platform"] == "Facebook Ads"
     assert result["data"][0]["rev"] == 1500.0

@@ -605,8 +605,8 @@ async def _data_export(
     date_end: str = "",
     metrics: list[str] | None = None,
     breakdowns: list[str] | None = None,
-    attribution_model: str = "northbeam_custom__va",
-    attribution_window: str = "7",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
 ) -> dict[str, Any]:
     """Run a full Data Export: create → poll → download → aggregate."""
     try:
@@ -706,13 +706,16 @@ async def northbeam_data_export(
     date_end: str,
     metrics: list[str],
     breakdowns: list[str],
-    attribution_model: str = "northbeam_custom__va",
-    attribution_window: str = "7",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
 ) -> dict[str, Any]:
     """Run a Northbeam Data Export for outcome metrics (revenue, ROAS, CAC,
     conversions, etc.) with flexible breakdowns and attribution settings.
 
-    Use northbeam_list_options to discover valid metric/breakdown/model values.
+    Revenue is reported via `revAttributed` (the UI "Revenue"/ROAS basis), not
+    `rev`. Defaults match the account's UI default: Clicks only
+    (`northbeam_custom`), 1-day window, accrual. Use northbeam_list_options to
+    discover valid metric/breakdown/model values.
 
     Returns aggregated data grouped by the requested breakdowns. Additive
     metrics are summed; ratio metrics are left null when a group spans multiple

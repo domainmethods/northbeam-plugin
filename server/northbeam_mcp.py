@@ -395,7 +395,10 @@ async def _spend_via_export(
 
     breakdown="campaign" sends level=campaign (campaign is the export level, NOT
     a Northbeam breakdown dimension) with a Platform payload breakdown, then
-    aggregates on platform + campaign_name so campaigns never collapse."""
+    aggregates on platform + campaign_name so campaigns never collapse.
+
+    Results are capped at MAX_RESULT_ROWS rows; check `truncated` and narrow by
+    platform_name or date range if set."""
     breakdown = (breakdown or "platform").lower()
     if breakdown not in _VALID_SPEND_BREAKDOWNS:
         raise ToolError(
@@ -435,9 +438,12 @@ async def _spend_via_export(
             needle = platform_name.lower()
             rows = [r for r in rows if (r.get("platform_name") or "").lower() == needle]
 
+        total_count = len(rows)
+        truncated = total_count > MAX_RESULT_ROWS
         return {
-            "data": rows,
-            "total_count": len(rows),
+            "data": rows[:MAX_RESULT_ROWS],
+            "total_count": total_count,
+            "truncated": truncated,
             "date_range": {"start": date_start, "end": date_end},
         }
     except (NorthbeamAuthError, NorthbeamConfigError):

@@ -1141,10 +1141,49 @@ async def test_spend_via_export_campaign_breakdown_keeps_campaigns_separate(
 
 
 async def test_spend_via_export_rejects_unknown_breakdown(config):
-    with pytest.raises(ToolError):
+    with pytest.raises(ToolError, match="Unsupported breakdown"):
         await _spend_via_export(
             config=config,
             date_start="2026-05-01",
             date_end="2026-05-31",
             breakdown="adset",
         )
+
+
+async def test_spend_via_export_campaign_breakdown_filters_by_platform(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    csv_content = (
+        "breakdown_platform_northbeam,campaign_name,spend,imprs,ecpc\n"
+        "Facebook Ads,FB-CBO,798.61,63490,1.0676604278\n"
+        "TikTok,TT-SPARK,1212.45,48732,2.9937037037\n"
+    )
+
+    with respx.mock:
+        _mock_export_options(sample_export_options)
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        result = await _spend_via_export(
+            config=config,
+            date_start="2026-05-01",
+            date_end="2026-05-31",
+            breakdown="campaign",
+            platform_name="facebook ads",
+        )
+
+    assert result["total_count"] == 1
+    assert result["data"][0]["campaign_name"] == "FB-CBO"
+    assert result["data"][0]["platform_name"] == "Facebook Ads"

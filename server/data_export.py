@@ -20,6 +20,19 @@ METRIC_COLUMN_ALIASES = {
     "impressions": ["imprs"],
 }
 
+# The Data Export API returns one row per accounting mode when a revenue metric
+# is requested ("Accrual performance" + "Cash snapshot"). These are the CSV
+# column-name candidates that carry the accounting mode, used to drop the
+# duplicate rows before aggregation. Confirm/extend the exact name against a
+# live export (see the live-verification task in the plan).
+PARTITION_COLUMN_ALIASES = {
+    "accounting_mode": [
+        "accounting_mode",
+        "Accounting Mode",
+        "accounting_mode_northbeam",
+    ],
+}
+
 DEFAULT_EXPORT_OPTIONS = {
     "export_aggregation": "BREAKDOWN",
     "remove_zero_spend": False,
@@ -129,6 +142,10 @@ def _dedupe(values: list[str]) -> list[str]:
 
 def metric_column_candidates(metric_id: str) -> list[str]:
     return _dedupe([metric_id, *METRIC_COLUMN_ALIASES.get(metric_id, [])])
+
+
+def partition_column_candidates(name: str) -> list[str]:
+    return _dedupe([name, *PARTITION_COLUMN_ALIASES.get(name, [])])
 
 
 def breakdown_column_candidates(breakdown: str) -> list[str]:

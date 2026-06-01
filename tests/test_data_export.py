@@ -7,6 +7,7 @@ from server.data_export import (
     extract_download_url,
     extract_export_id,
     metric_column_candidates,
+    partition_column_candidates,
 )
 
 
@@ -137,3 +138,15 @@ def test_build_data_export_payload_uses_ui_defaults():
 
 def test_metric_column_candidates_maps_impressions_to_imprs():
     assert metric_column_candidates("impressions") == ["impressions", "imprs"]
+
+
+def test_partition_column_candidates_for_accounting_mode():
+    assert partition_column_candidates("accounting_mode") == [
+        "accounting_mode",
+        "Accounting Mode",
+        "accounting_mode_northbeam",
+    ]
+
+
+def test_partition_column_candidates_unknown_returns_self():
+    assert partition_column_candidates("nonexistent") == ["nonexistent"]

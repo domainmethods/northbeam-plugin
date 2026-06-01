@@ -18,6 +18,7 @@
 - **Attribution defaults.** UI default for this account = Clicks only (`northbeam_custom`) / 1-day window / accrual. Current code defaults to `northbeam_custom__va` / `7` — wrong.
 - **Fan-out trap.** When a revenue metric is requested, the API returns extra rows per breakdown — one per accounting mode (an "Accrual performance" row at the requested window PLUS a "Cash snapshot" row at lifetime). Spend is repeated on both, so blind summation doubles spend. The fix filters to the requested accounting mode before aggregating.
 - **Verified ground truth (May 2026):** Data Export `spend` by platform = Facebook $407,056.74 + TikTok $70,866.64 + Google $67,753.45 = **$545,676.83** (matches dashboard to the penny). Facebook `revAttributed` under Clicks only / 1-day / accrual = **$89,097.31**, ROAS **0.22**.
+- **Campaign is a `level`, not a breakdown (verified live 2026-06-01).** `GET /v1/exports/breakdowns` returns ONLY four breakdowns: Category / Platform / Revenue Source / Targeting — there is no Campaign breakdown. Campaign-level rows come from the export request's `level` field set to `"campaign"`, which adds a `campaign_name` column (and `campaign_id`/`status` when `include_ids` is on, which we do not need — `campaign_name` is present at the default `include_ids: false`). A live `level="campaign"` + Platform-breakdown export returned columns `breakdown_platform_northbeam, campaign_name, status, accounting_mode, attribution_model, attribution_window, spend, imprs, ecpc` with correct per-campaign spend (e.g. `PARTNERSHIPS-CBO… = $798.61, imprs 63490, ecpc 1.07`). A spend-only campaign export does **not** fan out (one accrual partition, ~113 rows for a single day; no cash duplication). The `accounting_mode` CSV value is the human label `"Accrual performance"` (not `"accrual"`) — the partition filter (Task 4) matches it via `startswith("accrual")`, confirmed correct.
 - **zsh note:** zsh does not word-split unquoted variables. In any shell command, pass explicit file paths to `grep`, not a `$VAR` holding a space-separated list.
 
 The branch `northbeam-ui-parity` is already checked out with the design spec committed.
@@ -505,6 +506,30 @@ def test_spend_rows_from_aggregated_zero_ecpc_yields_zero_clicks():
 
     assert rows[0]["clicks"] == 0.0
     assert rows[0]["cpc"] is None
+
+
+def test_spend_rows_from_aggregated_emits_campaign_name_when_keyed():
+    # Verified live: level=campaign exports carry a `campaign_name` column, and
+    # aggregating on ["platform", "campaign_name"] yields entries with both keys.
+    aggregated = [
+        {"platform": "Facebook Ads", "campaign_name": "PARTNERSHIPS-CBO",
+         "spend": 798.61, "impressions": 63490.0, "ecpc": 1.0676604278},
+    ]
+
+    rows = _spend_rows_from_aggregated(aggregated, campaign_key="campaign_name")
+
+    assert rows[0]["platform_name"] == "Facebook Ads"
+    assert rows[0]["campaign_name"] == "PARTNERSHIPS-CBO"
+    assert rows[0]["spend"] == 798.61
+    assert rows[0]["clicks"] == 798.61 / 1.0676604278
+
+
+def test_spend_rows_from_aggregated_omits_campaign_name_by_default():
+    aggregated = [{"platform": "Facebook Ads", "spend": 100.0, "impressions": 10.0, "ecpc": 1.0}]
+
+    rows = _spend_rows_from_aggregated(aggregated)
+
+    assert "campaign_name" not in rows[0]
 ```
 
 `_compute_blended_metrics` and `_aggregate_spend_by_platform` are already importable from `server.northbeam_mcp` (used by `tests/test_portfolio.py`). Import them in `tests/test_tools.py` as well.
@@ -522,23 +547,29 @@ In `server/northbeam_mcp.py`, add after `_enrich_spend_rows` (after line 78):
 def _spend_rows_from_aggregated(
     aggregated: list[dict[str, Any]],
     breakdown_key: str = "platform",
+    campaign_key: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Convert per-breakdown Data Export rows into the legacy spend-row shape
-    (`platform_name`, `spend`, `impressions`, `clicks`) that the analyze
-    capabilities consume. Impressions come from the `imprs`-backed `impressions`
-    metric; clicks are derived from `ecpc` (clicks = spend / ecpc)."""
+    """Convert aggregated Data Export rows into the legacy spend-row shape
+    (`platform_name`, optionally `campaign_name`, `spend`, `impressions`,
+    `clicks`) that the analyze capabilities consume. Impressions come from the
+    `imprs`-backed `impressions` metric; clicks are derived from `ecpc`
+    (clicks = spend / ecpc). When `campaign_key` is set (campaign-level exports),
+    each row also carries `campaign_name`."""
     rows: list[dict[str, Any]] = []
     for entry in aggregated:
         spend = _safe_float(entry.get("spend"))
         impressions = _safe_float(entry.get("impressions"))
         ecpc = _safe_float(entry.get("ecpc"))
         clicks = spend / ecpc if ecpc > 0 else 0.0
-        rows.append({
+        row = {
             "platform_name": entry.get(breakdown_key) or "Unknown",
             "spend": spend,
             "impressions": impressions,
             "clicks": clicks,
-        })
+        }
+        if campaign_key:
+            row["campaign_name"] = entry.get(campaign_key) or "Unknown"
+        rows.append(row)
     return _enrich_spend_rows(rows)
 ```
 
@@ -556,11 +587,14 @@ git commit -m "feat: map Data Export rows to spend shape (imprs + ecpc-derived c
 
 ---
 
-### Task 6: `northbeam_spend` tool (Data Export-backed spend + efficiency)
+### Task 6: `northbeam_spend` tool (Data Export-backed spend + efficiency, platform or campaign)
 
 **Files:**
+- Modify: `server/northbeam_mcp.py:393-421` (`_build_export_body` — add a `level` param)
 - Modify: `server/northbeam_mcp.py` (add `_spend_via_export` and the `@mcp.tool() northbeam_spend`, after `_list_options` ends, near line 346)
 - Test: `tests/test_tools.py`
+
+**Campaign mechanism (verified live 2026-06-01, see Background):** Campaign is NOT a Northbeam breakdown dimension — the only breakdowns are Category / Platform / Revenue Source / Targeting. Campaign-level rows come from the export's `level` field (`level="campaign"`), which adds a `campaign_name` column. The key technique: the **payload** breakdowns (sent to the API) and the **aggregation** breakdowns (used for grouping) differ. For `breakdown="campaign"` we send `level="campaign"` with payload `breakdowns=["platform"]`, then aggregate on `["platform", "campaign_name"]`. `breakdown_column_candidates("campaign_name")` already resolves to the `campaign_name` column (no new alias needed), so `_aggregate_export_rows` and `_run_export_pipeline` need **no changes** — two campaigns under one platform stay separate because `campaign_name` is part of the group key. Never send `campaign_name` as a payload breakdown (the API rejects it).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -647,6 +681,65 @@ async def test_spend_via_export_filters_by_platform_name(
 
     assert result["total_count"] == 1
     assert result["data"][0]["platform_name"] == "Facebook Ads"
+
+
+async def test_spend_via_export_campaign_breakdown_keeps_campaigns_separate(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    # level=campaign CSV: two campaigns under the SAME platform must not collapse.
+    csv_content = (
+        "breakdown_platform_northbeam,campaign_name,spend,imprs,ecpc\n"
+        "Facebook Ads,PARTNERSHIPS-CBO,798.61,63490,1.0676604278\n"
+        "Facebook Ads,SINGLE-FUNNEL,1212.45,48732,2.9937037037\n"
+    )
+
+    with respx.mock:
+        _mock_export_options(sample_export_options)
+        post_route = respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        result = await _spend_via_export(
+            config=config,
+            date_start="2026-05-01",
+            date_end="2026-05-31",
+            breakdown="campaign",
+        )
+
+    sent = json.loads(post_route.calls[0].request.content)
+    assert sent["level"] == "campaign"
+    # campaign is the level, NOT a payload breakdown.
+    payload_breakdown_keys = [b["key"] for b in sent["breakdowns"]]
+    assert payload_breakdown_keys == ["Platform (Northbeam)"]
+    assert "campaign_name" not in payload_breakdown_keys
+
+    assert result["total_count"] == 2
+    names = {r["campaign_name"] for r in result["data"]}
+    assert names == {"PARTNERSHIPS-CBO", "SINGLE-FUNNEL"}
+    cbo = next(r for r in result["data"] if r["campaign_name"] == "PARTNERSHIPS-CBO")
+    assert cbo["platform_name"] == "Facebook Ads"
+    assert cbo["spend"] == 798.61
+
+
+async def test_spend_via_export_rejects_unknown_breakdown(config):
+    with pytest.raises(ToolError):
+        await _spend_via_export(
+            config=config,
+            date_start="2026-05-01",
+            date_end="2026-05-31",
+            breakdown="adset",
+        )
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -654,12 +747,51 @@ async def test_spend_via_export_filters_by_platform_name(
 Run: `uv run pytest tests/test_tools.py::test_spend_via_export_returns_legacy_spend_shape -v`
 Expected: FAIL — `_spend_via_export` does not exist.
 
-- [ ] **Step 3: Implement `_spend_via_export` and the tool**
+- [ ] **Step 3a: Add a `level` parameter to `_build_export_body`**
 
-In `server/northbeam_mcp.py`, add after `_list_options` (after line 345) — note it reuses `_build_export_body` and `_run_export_pipeline` defined later in the module, which is fine at call time:
+`_build_export_body` (lines 393-421) currently always builds a `level="platform"` payload. Add a `level` parameter and thread it into `build_data_export_payload` so the campaign path can request `level="campaign"`. Replace the signature and the `build_data_export_payload(...)` call:
+
+```python
+async def _build_export_body(
+    client: NorthbeamClient,
+    *,
+    date_start: str,
+    date_end: str,
+    metrics: list[str],
+    breakdowns: list[str],
+    attribution_model: str,
+    attribution_window: str,
+    level: str = "platform",
+) -> dict[str, Any]:
+    try:
+        breakdown_values = None
+        if breakdowns:
+            options = await client.list_export_options()
+            breakdown_values = build_breakdown_value_lookup(
+                {"breakdowns": options["breakdowns"]}
+            )
+
+        return build_data_export_payload(
+            date_start=date_start,
+            date_end=date_end,
+            metrics=metrics,
+            breakdowns=breakdowns,
+            attribution_model=attribution_model,
+            attribution_window=attribution_window,
+            breakdown_values=breakdown_values,
+            level=level,
+        )
+    except ValueError as e:
+        raise ToolError(str(e)) from None
+```
+
+- [ ] **Step 3b: Implement `_spend_via_export` and the tool**
+
+In `server/northbeam_mcp.py`, add after `_list_options` (after line 345) — note it reuses `_build_export_body` and `_run_export_pipeline` defined later in the module, which is fine at call time. The `breakdown` param selects platform-level (default) or campaign-level rows; see the "Campaign mechanism" note above for why the payload and aggregation breakdowns differ:
 
 ```python
 SPEND_EXPORT_METRICS = ["spend", "impressions", "ecpc"]
+_VALID_SPEND_BREAKDOWNS = ("platform", "campaign")
 
 
 async def _spend_via_export(
@@ -667,12 +799,31 @@ async def _spend_via_export(
     date_start: str = "",
     date_end: str = "",
     platform_name: str | None = None,
+    breakdown: str = "platform",
     attribution_model: str = "northbeam_custom",
     attribution_window: str = "1",
 ) -> dict[str, Any]:
-    """Source platform-level spend + efficiency (impressions, clicks, CPC, CPM,
-    CTR) from the Data Export API. Spend is attribution-independent; the defaults
-    match the account's UI default."""
+    """Source spend + efficiency (impressions, clicks, CPC, CPM, CTR) from the
+    Data Export API, by platform (default) or by campaign. Spend is
+    attribution-independent; the defaults match the account's UI default.
+
+    breakdown="campaign" sends level=campaign (campaign is the export level, NOT
+    a Northbeam breakdown dimension) with a Platform payload breakdown, then
+    aggregates on platform + campaign_name so campaigns never collapse."""
+    breakdown = (breakdown or "platform").lower()
+    if breakdown not in _VALID_SPEND_BREAKDOWNS:
+        raise ToolError(
+            f"Unsupported breakdown {breakdown!r}; use 'platform' or 'campaign'."
+        )
+    if breakdown == "campaign":
+        level = "campaign"
+        aggregation_breakdowns = ["platform", "campaign_name"]
+        campaign_key = "campaign_name"
+    else:
+        level = "platform"
+        aggregation_breakdowns = ["platform"]
+        campaign_key = None
+
     try:
         if config is None:
             config = load_config()
@@ -685,12 +836,15 @@ async def _spend_via_export(
                 breakdowns=["platform"],
                 attribution_model=attribution_model,
                 attribution_window=attribution_window,
+                level=level,
             )
             aggregated = await _run_export_pipeline(
-                client, body, breakdowns=["platform"], metrics=SPEND_EXPORT_METRICS,
+                client, body,
+                breakdowns=aggregation_breakdowns,
+                metrics=SPEND_EXPORT_METRICS,
             )
 
-        rows = _spend_rows_from_aggregated(aggregated)
+        rows = _spend_rows_from_aggregated(aggregated, campaign_key=campaign_key)
         if platform_name:
             needle = platform_name.lower()
             rows = [r for r in rows if (r.get("platform_name") or "").lower() == needle]
@@ -719,21 +873,26 @@ async def northbeam_spend(
     date_start: str,
     date_end: str,
     platform_name: str | None = None,
+    breakdown: str = "platform",
     attribution_model: str = "northbeam_custom",
     attribution_window: str = "1",
 ) -> dict[str, Any]:
-    """Query platform-level ad spend and efficiency (spend, impressions, clicks,
-    CPC, CPM, CTR) from the Northbeam Data Export API. This is the source of
-    truth for spend on natively-integrated accounts (Facebook/Google/TikTok).
+    """Query ad spend and efficiency (spend, impressions, clicks, CPC, CPM, CTR)
+    from the Northbeam Data Export API. This is the source of truth for spend on
+    natively-integrated accounts (Facebook/Google/TikTok).
 
     Date format: YYYY-MM-DD. platform_name filters results (case-insensitive).
-    Defaults match the account's UI default (Clicks only / 1-day / accrual);
-    spend itself is attribution-independent.
+    breakdown="platform" (default) returns one row per platform; "campaign"
+    returns one row per campaign (with platform_name + campaign_name) for
+    campaign-level analysis (anomalies, fatigue, naming intelligence). Defaults
+    match the account's UI default (Clicks only / 1-day / accrual); spend itself
+    is attribution-independent.
     """
     return await _spend_via_export(
         date_start=date_start,
         date_end=date_end,
         platform_name=platform_name,
+        breakdown=breakdown,
         attribution_model=attribution_model,
         attribution_window=attribution_window,
     )
@@ -1682,6 +1841,20 @@ async def main() -> None:
     total = sum(r["spend"] for r in spend["data"])
     print(f"TOTAL spend = {total:,.2f}  (expected 545,676.83)")
 
+    campaigns = await _spend_via_export(
+        config=config, date_start="2026-05-01", date_end="2026-05-31",
+        breakdown="campaign",
+    )
+    print("\n=== northbeam_spend breakdown='campaign' (May 2026) ===")
+    for row in campaigns["data"][:10]:
+        print(f"{row['platform_name']:<16} {row.get('campaign_name', '?'):<40} "
+              f"spend={row['spend']:>12,.2f}")
+    assert all("campaign_name" in row for row in campaigns["data"]), \
+        "campaign breakdown must emit a campaign_name on every row"
+    camp_total = sum(r["spend"] for r in campaigns["data"])
+    print(f"campaign rows={campaigns['total_count']}  "
+          f"TOTAL spend = {camp_total:,.2f}  (should still equal 545,676.83)")
+
     health = await _portfolio_health(
         config=config, date_start="2026-05-01", date_end="2026-05-31",
     )
@@ -1699,10 +1872,13 @@ if __name__ == "__main__":
 
 Run: `uv run python scripts/verify_ui_parity.py`
 
-Expected: total spend ≈ 545,676.83; Facebook revAttributed ≈ 89,097.31, roas ≈ 0.22.
+Expected:
+- Platform path: total spend ≈ 545,676.83; Facebook revAttributed ≈ 89,097.31, roas ≈ 0.22.
+- Campaign path: every row carries a `campaign_name`; the per-campaign spend sums to the same ≈ 545,676.83 (campaign rows are a finer partition of the same spend, not a fan-out). Verified live 2026-06-01 that `level="campaign"` adds the `campaign_name` column and spend-only campaign exports do not fan out.
 
 **If the numbers don't match:**
 - If spend is roughly doubled, the accounting-mode partition didn't engage. Download one raw CSV and inspect the header for the real accounting-mode column name, then add it to `PARTITION_COLUMN_ALIASES["accounting_mode"]` in `server/data_export.py` and re-run. (To inspect, temporarily print `csv_result["columns"]` in `_run_export_pipeline`, or run a one-off download script — write it to a file, don't run inline.)
+- If the campaign path raises or emits no `campaign_name`, confirm the export body sent `level="campaign"` (Task 6 Step 3a/3b) and that the CSV header contains `campaign_name`. Northbeam emits `campaign_name` at the default `include_ids: false`; do NOT send `campaign_name` as a payload breakdown (the API rejects it — it is a level, not a breakdown).
 - If `revAttributed` is empty/zero, re-confirm the metric id via `northbeam_list_options` output and adjust.
 - If the export times out (queue degradation), retry later or raise `NORTHBEAM_EXPORT_TIMEOUT`. This is environmental, not a code bug.
 
@@ -1725,6 +1901,7 @@ git commit -m "fix: correct accounting-mode partition column name from live veri
 
 **Spec coverage** (each spec requirement → task):
 - (a) re-source spend + efficiency from Data Export (imprs / ecpc / true blended) → Tasks 5, 6
+- (a2) spend + efficiency "by platform/campaign" (spec §3, §4.3) → Task 6: `northbeam_spend(breakdown="campaign")`. Verified live 2026-06-01 that campaign is the export `level` (not a breakdown — see Background): the campaign path sends `level="campaign"` with payload `breakdowns=["platform"]` and aggregates on `["platform", "campaign_name"]`, so `_aggregate_export_rows`/`_run_export_pipeline` are unchanged. Live-verified end-to-end in Task 14 Step 6.
 - (b) fan-out fix (group/filter by accounting mode) → Tasks 2, 4
 - (c) attribution defaults `northbeam_custom` / `1` / accrual, configurable → Tasks 1, 6, 8, 10
 - (d) revenue/ROAS from `revAttributed` → Tasks 4, 8, 9, 10
@@ -1740,7 +1917,9 @@ git commit -m "fix: correct accounting-mode partition column name from live veri
 - Spec §4.3 said to change the column reads inside `_enrich_spend_rows` / `_compute_blended_metrics` / `_aggregate_spend_by_platform`. Instead, a single mapper (`_spend_rows_from_aggregated`, Task 5) normalizes Data Export rows to the legacy shape those helpers already expect — one place owns the column knowledge, less churn, helpers stay tested.
 - Spec §3 data-flow showed separate spend vs outcome exports for portfolio. Implementation uses **one combined export** (Task 10): cheaper, deterministic to test, and ROAS = revAttributed/spend is consistent by construction because both come from the same accrual rows. The accounting-mode filter protects spend from the fan-out.
 - Window-based partition filtering is omitted (YAGNI): only one accrual window is requested, so accounting-mode filtering alone removes the duplicate.
+- Spec §4.3 said per-platform CPC/CPM/CTR come "from Northbeam's own cpm/ctr/ecpc columns where present." The plan fetches only `spend`, `impressions` (CSV `imprs`), and `ecpc`, then recomputes cpm/ctr/cpc in `_spend_rows_from_aggregated` (cpc = spend/clicks, cpm = spend/imprs×1000, ctr = clicks/imprs×100, with clicks = spend/ecpc). This is numerically identical to Northbeam's own columns (cpm/ctr are exact algebraic rearrangements of spend/imprs/ecpc) and keeps the metric set minimal so the spend export never fan-outs. Per-platform values match the UI by construction; blended values use summed inputs (Σspend / Σimprs, etc.), which is the correct blended definition rather than an average of per-platform ratios.
+- Spec §4.3 said "Keep the concurrent spend+outcome execution" for portfolio. The combined-export deviation above (one export carrying both spend and `revAttributed` rows, Task 10) **supersedes** that line: a single export is cheaper, deterministic to test, and makes ROAS = revAttributed/spend consistent by construction. The concurrency that §4.3 preserved is no longer needed because there is only one export to run. Net behavior still matches the spec's intent (portfolio returns blended + per-platform spend and outcomes in one tool call).
 
 **Placeholder scan:** none — every code step has complete code; the only runtime-discovered value (the exact accounting-mode column name) has an explicit live-verification task with a correction path.
 
-**Type/name consistency:** `_spend_rows_from_aggregated`, `_spend_via_export`, `northbeam_spend`, `northbeam_list_uploaded_spend`, `_select_accounting_partition`, `partition_column_candidates`, `PARTITION_COLUMN_ALIASES`, `SPEND_EXPORT_METRICS`, `PORTFOLIO_EXPORT_METRICS` are used identically across the tasks that define and consume them. `_aggregate_export_rows(..., accounting_mode=None)` is backward-compatible with existing direct-call tests.
+**Type/name consistency:** `_spend_rows_from_aggregated`, `_spend_via_export`, `northbeam_spend`, `northbeam_list_uploaded_spend`, `_select_accounting_partition`, `partition_column_candidates`, `PARTITION_COLUMN_ALIASES`, `SPEND_EXPORT_METRICS`, `PORTFOLIO_EXPORT_METRICS` are used identically across the tasks that define and consume them. `_aggregate_export_rows(..., accounting_mode=None)` is backward-compatible with existing direct-call tests. Campaign path: `_VALID_SPEND_BREAKDOWNS = ("platform", "campaign")`, the `campaign_key` param on `_spend_rows_from_aggregated` (Task 5), the `level` param on `_build_export_body` (Task 6 Step 3a), and the `breakdown` param on `_spend_via_export`/`northbeam_spend` (Task 6 Step 3b) are named identically where defined and consumed. The `level` param threads to `build_data_export_payload(..., level=...)`, which already exists in `server/data_export.py:70`. No `campaign_name` alias is added to `BREAKDOWN_ALIASES` (it must never be sent as a payload breakdown); `breakdown_column_candidates("campaign_name")` already resolves to `["campaign_name"]` for aggregation grouping.

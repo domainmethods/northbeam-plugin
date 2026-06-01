@@ -1187,3 +1187,12 @@ async def test_spend_via_export_campaign_breakdown_filters_by_platform(
     assert result["total_count"] == 1
     assert result["data"][0]["campaign_name"] == "FB-CBO"
     assert result["data"][0]["platform_name"] == "Facebook Ads"
+
+
+def test_uploaded_spend_tool_is_exposed_and_documented():
+    from server import northbeam_mcp
+
+    tool = northbeam_mcp.northbeam_list_uploaded_spend
+    assert tool.__name__ == "northbeam_list_uploaded_spend"
+    assert "upload" in (tool.__doc__ or "").lower()
+    assert not hasattr(northbeam_mcp, "northbeam_list_spend")

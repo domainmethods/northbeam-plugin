@@ -317,7 +317,7 @@ async def _check_connection(
 
 
 @mcp.tool()
-async def northbeam_list_spend(
+async def northbeam_list_uploaded_spend(
     date: str | None = None,
     date_start: str | None = None,
     date_end: str | None = None,
@@ -330,15 +330,14 @@ async def northbeam_list_spend(
     page_size: int = 1000,
     fetch_all: bool = False,
 ) -> dict[str, Any]:
-    """Query Northbeam spend records. Returns spend, clicks, impressions, and
-    pre-computed efficiency metrics (CPC, CPM, CTR) per row.
-    Filterable by date range, platform, campaign, adset, and ad.
-    Use fetch_all=true to auto-paginate and retrieve all matching records.
+    """Query spend a customer UPLOADED via the Spend API for non-integrated
+    channels (e.g. email tools). This is NOT the source of platform ad spend —
+    it returns empty for natively-integrated accounts (Facebook/Google/TikTok).
+    For real ad spend and efficiency, use northbeam_spend.
 
     Date parameters: provide 'date' for a single day, or 'date_start'+'date_end'
-    for a range. Format: YYYY-MM-DD.
-
-    platform_name filters results server-side (case-insensitive). Example: 'Facebook'.
+    for a range. Format: YYYY-MM-DD. platform_name filters server-side
+    (case-insensitive).
     """
     return await _list_spend(
         date=date,

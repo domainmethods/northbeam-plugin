@@ -4,6 +4,7 @@ import respx
 from mcp.server.fastmcp.exceptions import ToolError
 from server.config import NorthbeamConfig
 from server.northbeam_mcp import _list_spend, _check_connection
+import server.client as client_module
 
 
 @pytest.fixture
@@ -108,7 +109,8 @@ async def test_full_pagination_across_pages(config):
     assert result["pages_fetched"] == 2
 
 
-async def test_check_connection_shows_all_platforms(config):
+async def test_check_connection_shows_all_platforms(config, monkeypatch):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
     records = _make_spend_records(2, "Facebook") + _make_spend_records(1, "Google")
     response_body = {
         "data": records,
@@ -117,16 +119,41 @@ async def test_check_connection_shows_all_platforms(config):
         "total_pages": 1,
         "total_count": 3,
     }
+    csv_content = "transactions,rev\n5,1234.56\n"
 
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
             return_value=httpx.Response(200, json=response_body)
         )
+        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(200, json={"breakdowns": []})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json={"metrics": []})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json={"attribution_models": []})
+        )
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json={"id": "exp-integration-123"})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-integration-123").mock(
+            return_value=httpx.Response(
+                200,
+                json={"status": "SUCCESS", "result": ["https://storage.example.com/export.csv"]},
+            )
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
 
         result = await _check_connection(config=config)
 
-    assert "Connected" in result
-    assert "prod" in result
+    assert "Status: Connected" in result
+    assert "Environment: prod" in result
+    assert "Spend API: OK - 3 spend rows" in result
+    assert "Data Export metadata: OK" in result
+    assert "Data Export API: OK - transactions=5.00, revenue=1234.56" in result
     assert "Facebook" in result
     assert "Google" in result
 

@@ -350,6 +350,20 @@ async def test_create_data_export_sends_post_with_body(config):
     assert route.called
 
 
+async def test_create_data_export_422_singular_error_array_includes_detail(config):
+    with respx.mock:
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(
+                422,
+                json={"error": [{"loc": ["metrics", 0], "msg": "bad"}]},
+            )
+        )
+
+        async with NorthbeamClient(config) as client:
+            with pytest.raises(Exception, match=r"metrics.*bad"):
+                await client.create_data_export({"metrics": [{"id": "bad"}]})
+
+
 async def test_poll_export_result_returns_on_completed(config):
     with respx.mock:
         route = respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-abc")

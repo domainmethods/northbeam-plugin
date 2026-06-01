@@ -24,6 +24,24 @@ def _mock_export_options(sample_export_options):
     )
 
 
+def _mock_successful_connection_outcome(
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    csv_content="transactions,rev\n0,0\n",
+):
+    _mock_export_options(sample_export_options)
+    respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+        return_value=httpx.Response(201, json=sample_export_create_response)
+    )
+    respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+        return_value=httpx.Response(200, json=sample_export_completed_response)
+    )
+    respx.get("https://storage.example.com/export.csv").mock(
+        return_value=httpx.Response(200, text=csv_content)
+    )
+
+
 async def test_list_spend_tool_returns_dict(config, sample_spend_response):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -67,7 +85,14 @@ async def test_list_spend_tool_auth_error_raises_tool_error(config):
             await _list_spend(config=config, date="2026-04-20")
 
 
-async def test_check_connection_success(config):
+async def test_check_connection_success(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
     response_body = {
         "data": [
             {"platform_name": "Facebook", "date": "2026-04-20", "spend": 100,
@@ -89,10 +114,15 @@ async def test_check_connection_success(config):
         respx.get("https://api.northbeam.io/v1/spend").mock(
             return_value=httpx.Response(200, json=response_body)
         )
+        _mock_successful_connection_outcome(
+            sample_export_options,
+            sample_export_create_response,
+            sample_export_completed_response,
+        )
 
         result = await _check_connection(config=config)
 
-    assert "connected" in result.lower()
+    assert "Status: Connected" in result
     assert "prod" in result.lower()
     assert "Facebook" in result
     assert "TikTok" in result
@@ -108,17 +138,233 @@ async def test_check_connection_auth_failure_raises_tool_error(config):
             await _check_connection(config=config)
 
 
-async def test_check_connection_handles_empty_response(config):
+async def test_check_connection_handles_empty_response(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
     """API returning empty JSON object should not crash."""
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
             return_value=httpx.Response(200, json={})
+        )
+        _mock_successful_connection_outcome(
+            sample_export_options,
+            sample_export_create_response,
+            sample_export_completed_response,
         )
 
         result = await _check_connection(config=config)
 
     assert "connected" in result.lower()
     assert "0" in result
+
+
+async def test_check_connection_reports_spend_and_outcome_surfaces(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    spend_response = {
+        "data": [],
+        "page": 1,
+        "page_size": 1000,
+        "total_pages": 1,
+        "total_count": 0,
+    }
+    csv_content = "transactions,rev\n80.38863860198144,18372.969881449368\n"
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, json=spend_response)
+        )
+        breakdowns_route = respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(200, json=sample_export_options["breakdowns"])
+        )
+        metrics_route = respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json=sample_export_options["metrics"])
+        )
+        models_route = respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json=sample_export_options["attribution_models"])
+        )
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        result = await _check_connection(config=config, check_date="2026-05-31")
+
+    assert "Status: Connected" in result
+    assert "Environment: prod" in result
+    assert "Spend API: OK - 0 spend rows for 2026-05-31" in result
+    assert "Data Export metadata: OK" in result
+    assert "Data Export API: OK - transactions=80.39, revenue=18372.97 for 2026-05-31" in result
+    assert "spend rows are ad spend records, not orders or transactions" in result
+    assert "Outcome data exists even though spend rows are zero" in result
+    assert breakdowns_route.called
+    assert metrics_route.called
+    assert models_route.called
+
+
+async def test_check_connection_reports_partial_data_export_failure(
+    config,
+    sample_export_options,
+):
+    spend_response = {
+        "data": [],
+        "page": 1,
+        "page_size": 1000,
+        "total_pages": 1,
+        "total_count": 0,
+    }
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, json=spend_response)
+        )
+        breakdowns_route = respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(200, json=sample_export_options["breakdowns"])
+        )
+        metrics_route = respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json=sample_export_options["metrics"])
+        )
+        models_route = respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json=sample_export_options["attribution_models"])
+        )
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(422, json={"error": [{"loc": ["metrics", 0], "msg": "bad"}]})
+        )
+
+        result = await _check_connection(config=config, check_date="2026-05-31")
+
+    assert "Status: Partially connected" in result
+    assert "Spend API: OK" in result
+    assert "Data Export metadata: OK" in result
+    assert "Data Export API: Failed" in result
+    assert "metrics" in result
+    assert "bad" in result
+    assert breakdowns_route.called
+    assert metrics_route.called
+    assert models_route.called
+
+
+async def test_check_connection_reports_partial_metadata_failure(config):
+    spend_response = {
+        "data": [],
+        "page": 1,
+        "page_size": 1000,
+        "total_pages": 1,
+        "total_count": 0,
+    }
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, json=spend_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(500, json={"message": "metadata unavailable"})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json={"metrics": []})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json={"attribution_models": []})
+        )
+
+        result = await _check_connection(config=config, check_date="2026-05-31")
+
+    assert "Status: Partially connected" in result
+    assert "Spend API: OK" in result
+    assert "Data Export metadata: Failed" in result
+    assert "metadata unavailable" in result
+    assert "Data Export API: Skipped - metadata check failed" in result
+
+
+async def test_check_connection_reports_partial_poll_failure(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    spend_response = {
+        "data": [],
+        "page": 1,
+        "page_size": 1000,
+        "total_pages": 1,
+        "total_count": 0,
+    }
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, json=spend_response)
+        )
+        _mock_export_options(sample_export_options)
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json={"status": "FAILED", "error": "upstream failed"})
+        )
+
+        result = await _check_connection(config=config, check_date="2026-05-31")
+
+    assert "Status: Partially connected" in result
+    assert "Spend API: OK" in result
+    assert "Data Export metadata: OK" in result
+    assert "Data Export API: Failed" in result
+    assert "upstream failed" in result
+
+
+async def test_check_connection_reports_partial_download_failure(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    spend_response = {
+        "data": [],
+        "page": 1,
+        "page_size": 1000,
+        "total_pages": 1,
+        "total_count": 0,
+    }
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, json=spend_response)
+        )
+        _mock_export_options(sample_export_options)
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(503, text="download unavailable")
+        )
+
+        result = await _check_connection(config=config, check_date="2026-05-31")
+
+    assert "Status: Partially connected" in result
+    assert "Spend API: OK" in result
+    assert "Data Export metadata: OK" in result
+    assert "Data Export API: Failed" in result
+    assert "503 Service Unavailable" in result
 
 
 async def test_list_spend_missing_config_raises_tool_error(monkeypatch, tmp_path):

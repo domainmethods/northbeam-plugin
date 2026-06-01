@@ -194,7 +194,7 @@ class NorthbeamClient:
 
             if response.status_code == 422:
                 body = self._parse_body(response)
-                errors = body.get("errors", [])
+                errors = body.get("errors", body.get("error", []))
                 detail = "; ".join(
                     f"{e.get('loc', 'unknown')}: {e.get('msg', 'error')}"
                     for e in errors if isinstance(e, dict)

@@ -115,39 +115,135 @@ async def _list_spend(
         raise ToolError(f"Error querying Northbeam: {e}")
 
 
-async def _check_connection(config: NorthbeamConfig | None = None) -> str:
-    """Check Northbeam API connectivity and report visible platforms."""
+async def _run_outcome_sanity_probe(
+    client: NorthbeamClient,
+    *,
+    check_date: str,
+) -> dict[str, float]:
+    body = build_data_export_payload(
+        date_start=check_date,
+        date_end=check_date,
+        metrics=["txns", "rev"],
+        breakdowns=[],
+    )
+    rows = await _run_export_pipeline(
+        client,
+        body,
+        breakdowns=[],
+        metrics=["txns", "rev"],
+    )
+    totals = rows[0] if rows else {"txns": 0.0, "rev": 0.0}
+    return {
+        "transactions": _safe_float(totals.get("txns")),
+        "revenue": _safe_float(totals.get("rev")),
+    }
+
+
+async def _run_metadata_sanity_probe(client: NorthbeamClient) -> str:
+    await client.list_export_options()
+    return "Data Export metadata: OK - metrics, breakdowns, attribution models available"
+
+
+def _exception_group_contains_auth_error(error: ExceptionGroup) -> bool:
+    for exc in error.exceptions:
+        if isinstance(exc, (NorthbeamAuthError, NorthbeamConfigError)):
+            return True
+        if isinstance(exc, ExceptionGroup) and _exception_group_contains_auth_error(exc):
+            return True
+    return False
+
+
+def _format_exception_message(error: BaseException) -> str:
+    if isinstance(error, ExceptionGroup):
+        for exc in error.exceptions:
+            return _format_exception_message(exc)
+    return str(error)
+
+
+async def _check_connection(
+    config: NorthbeamConfig | None = None,
+    check_date: str | None = None,
+) -> str:
+    """Check Northbeam API connectivity and report spend and outcome surfaces."""
     try:
         if config is None:
             config = load_config()
-        yesterday = (date_type.today() - timedelta(days=1)).isoformat()
+        yesterday = check_date or (date_type.today() - timedelta(days=1)).isoformat()
         async with NorthbeamClient(config) as client:
             result = await client.list_spend(date=yesterday, page_size=1000)
+            status = "Connected"
+            metadata_line: str | None = None
+            outcome_line = "Data Export API: Skipped"
+            outcome = {"transactions": 0.0, "revenue": 0.0}
+
+            try:
+                metadata_line = await _run_metadata_sanity_probe(client)
+                outcome = await _run_outcome_sanity_probe(client, check_date=yesterday)
+                outcome_line = (
+                    "Data Export API: OK - "
+                    f"transactions={outcome['transactions']:.2f}, "
+                    f"revenue={outcome['revenue']:.2f} for {yesterday}"
+                )
+            except (NorthbeamAuthError, NorthbeamConfigError):
+                raise
+            except ExceptionGroup as eg:
+                if _exception_group_contains_auth_error(eg):
+                    raise NorthbeamAuthError(str(eg)) from eg
+                message = _format_exception_message(eg)
+                status = "Partially connected"
+                if metadata_line is None:
+                    metadata_line = f"Data Export metadata: Failed - {message}"
+                    outcome_line = "Data Export API: Skipped - metadata check failed"
+                else:
+                    outcome_line = f"Data Export API: Failed - {message}"
+            except Exception as e:
+                message = _format_exception_message(e)
+                status = "Partially connected"
+                if metadata_line is None:
+                    metadata_line = f"Data Export metadata: Failed - {message}"
+                    outcome_line = "Data Export API: Skipped - metadata check failed"
+                else:
+                    outcome_line = f"Data Export API: Failed - {message}"
 
         platforms = sorted(set(
             r.get("platform_name") for r in (result.get("data") or [])
             if r.get("platform_name")
         ))
         record_count = result.get("total_count") or 0
+        platform_text = (
+            ", ".join(platforms)
+            if platforms
+            else f"none (no spend rows for {yesterday})"
+        )
 
         lines = [
-            "Status: Connected",
+            f"Status: {status}",
             f"Environment: {config.environment}",
-            f"Records found (yesterday): {record_count}",
-            f"Platforms visible: {', '.join(platforms) if platforms else 'none (no data for yesterday)'}",
+            f"Spend API: OK - {record_count} spend rows for {yesterday}",
+            metadata_line or "Data Export metadata: Skipped",
+            outcome_line,
+            f"Platforms visible from spend: {platform_text}",
+            "Note: spend rows are ad spend records, not orders or transactions.",
         ]
+        if status == "Connected" and record_count == 0 and (
+            outcome["transactions"] > 0 or outcome["revenue"] > 0
+        ):
+            lines.append(
+                "Outcome data exists even though spend rows are zero; this usually means "
+                "the Spend API has no ad spend records for that date, not that orders are missing."
+            )
         return "\n".join(lines)
 
     except (NorthbeamAuthError, NorthbeamConfigError):
         raise ToolError(
-            "Status: Not connected — authentication failed. "
+            "Status: Not connected - authentication failed. "
             "Run /northbeam:setup for configuration instructions."
         )
     except ToolError:
         raise
     except Exception as e:
         logger.error("check_connection error: %s", e)
-        raise ToolError(f"Status: Not connected — {e}")
+        raise ToolError(f"Status: Not connected - {e}")
 
 
 @mcp.tool()

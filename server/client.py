@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import logging
 from typing import Any
 
 import httpx
@@ -16,6 +17,15 @@ EXPORT_POLL_TIMEOUT = 60.0
 DOWNLOAD_TIMEOUT = 60.0
 EXPORT_SUCCESS_STATUSES = {"COMPLETED", "SUCCESS"}
 EXPORT_FAILURE_STATUSES = {"FAILED", "FAILURE"}
+HTTP_CLIENT_LOGGERS = ("httpx", "httpcore")
+
+
+def _suppress_http_client_info_logging() -> None:
+    for logger_name in HTTP_CLIENT_LOGGERS:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+
+_suppress_http_client_info_logging()
 
 
 class NorthbeamAuthError(Exception):

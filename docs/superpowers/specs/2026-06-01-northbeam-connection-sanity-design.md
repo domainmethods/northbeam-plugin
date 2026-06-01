@@ -214,10 +214,13 @@ human-readable string for the MCP tool.
 
 Flow:
 
-1. Load credentials. If missing or auth fails on any required surface, return
-   `Status: Not connected` through `ToolError`.
-2. Query Spend API for yesterday with `page_size=1000`.
-3. Query Data Export metadata via `list_export_options`.
+1. Load credentials. If missing, return `Status: Not connected` through
+   `ToolError`.
+2. Query Spend API for yesterday with `page_size=1000`. If this auth/config
+   check fails, return `Status: Not connected`.
+3. Query Data Export metadata via `list_export_options`. If Spend API already
+   succeeded but Data Export auth/config fails, return `Status: Partially
+   connected` with the Data Export-specific failure.
 4. Run a tiny Data Export for yesterday:
    - metrics: `txns`, `rev`
    - breakdowns: none or `Platform (Northbeam)`. Prefer none for the cheapest

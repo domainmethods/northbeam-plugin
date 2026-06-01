@@ -1,7 +1,38 @@
+import logging
+
 import httpx
 import pytest
 import respx
-from server.client import NorthbeamClient, NorthbeamAuthError, NorthbeamAPIError
+from server.client import (
+    NorthbeamClient,
+    NorthbeamAuthError,
+    NorthbeamAPIError,
+    _suppress_http_client_info_logging,
+)
+
+
+def test_http_client_logging_suppressed_when_root_is_info():
+    root_logger = logging.getLogger()
+    httpx_logger = logging.getLogger("httpx")
+    httpcore_logger = logging.getLogger("httpcore")
+    original_levels = {
+        root_logger: root_logger.level,
+        httpx_logger: httpx_logger.level,
+        httpcore_logger: httpcore_logger.level,
+    }
+
+    try:
+        root_logger.setLevel(logging.INFO)
+        httpx_logger.setLevel(logging.NOTSET)
+        httpcore_logger.setLevel(logging.NOTSET)
+
+        _suppress_http_client_info_logging()
+
+        assert httpx_logger.getEffectiveLevel() >= logging.WARNING
+        assert httpcore_logger.getEffectiveLevel() >= logging.WARNING
+    finally:
+        for logger, level in original_levels.items():
+            logger.setLevel(level)
 
 
 async def test_list_spend_sends_auth_headers(config, sample_spend_response):

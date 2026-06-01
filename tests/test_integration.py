@@ -119,7 +119,7 @@ async def test_check_connection_shows_all_platforms(config, monkeypatch):
         "total_pages": 1,
         "total_count": 3,
     }
-    csv_content = "transactions,rev\n5,1234.56\n"
+    csv_content = "transactions,revAttributed\n5,1234.56\n"
 
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -151,7 +151,7 @@ async def test_check_connection_shows_all_platforms(config, monkeypatch):
 
     assert "Status: Connected" in result
     assert "Environment: prod" in result
-    assert "Spend API: OK - 3 spend rows" in result
+    assert "Uploaded Spend API: OK - 3 uploaded spend rows" in result
     assert "Data Export metadata: OK" in result
     assert "Data Export API: OK - transactions=5.00, revenue=1234.56" in result
     assert "Facebook" in result

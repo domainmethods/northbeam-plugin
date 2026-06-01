@@ -30,7 +30,7 @@ def _mock_successful_connection_outcome(
     sample_export_options,
     sample_export_create_response,
     sample_export_completed_response,
-    csv_content="transactions,rev\n0,0\n",
+    csv_content="transactions,revAttributed\n0,0\n",
 ):
     _mock_export_options(sample_export_options)
     respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
@@ -180,7 +180,7 @@ async def test_check_connection_reports_spend_and_outcome_surfaces(
         "total_pages": 1,
         "total_count": 0,
     }
-    csv_content = "transactions,rev\n80.38863860198144,18372.969881449368\n"
+    csv_content = "transactions,revAttributed\n80.38863860198144,18372.969881449368\n"
 
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -209,10 +209,10 @@ async def test_check_connection_reports_spend_and_outcome_surfaces(
 
     assert "Status: Connected" in result
     assert "Environment: prod" in result
-    assert "Spend API: OK - 0 spend rows for 2026-05-31" in result
+    assert "Uploaded Spend API: OK - 0 uploaded spend rows for 2026-05-31" in result
     assert "Data Export metadata: OK" in result
     assert "Data Export API: OK - transactions=80.39, revenue=18372.97 for 2026-05-31" in result
-    assert "spend rows are ad spend records, not orders or transactions" in result
+    assert "real ad spend comes from the Data Export API" in result
     assert "Outcome data exists even though spend rows are zero" in result
     assert breakdowns_route.called
     assert metrics_route.called

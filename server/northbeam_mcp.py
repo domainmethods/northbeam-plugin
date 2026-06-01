@@ -171,19 +171,19 @@ async def _run_outcome_sanity_probe(
     body = build_data_export_payload(
         date_start=check_date,
         date_end=check_date,
-        metrics=["txns", "rev"],
+        metrics=["txns", "revAttributed"],
         breakdowns=[],
     )
     rows = await _run_export_pipeline(
         client,
         body,
         breakdowns=[],
-        metrics=["txns", "rev"],
+        metrics=["txns", "revAttributed"],
     )
-    totals = rows[0] if rows else {"txns": 0.0, "rev": 0.0}
+    totals = rows[0] if rows else {"txns": 0.0, "revAttributed": 0.0}
     return {
         "transactions": _safe_float(totals.get("txns")),
-        "revenue": _safe_float(totals.get("rev")),
+        "revenue": _safe_float(totals.get("revAttributed")),
     }
 
 
@@ -284,11 +284,13 @@ async def _check_connection(
         lines = [
             f"Status: {status}",
             f"Environment: {config.environment}",
-            f"Spend API: OK - {record_count} spend rows for {yesterday}",
+            f"Uploaded Spend API: OK - {record_count} uploaded spend rows for "
+            f"{yesterday} (0 is normal for natively-integrated accounts)",
             metadata_line or "Data Export metadata: Skipped",
             outcome_line,
-            f"Platforms visible from spend: {platform_text}",
-            "Note: spend rows are ad spend records, not orders or transactions.",
+            f"Platforms with uploaded spend: {platform_text}",
+            "Note: real ad spend comes from the Data Export API (northbeam_spend); "
+            "the Uploaded Spend API only returns customer-uploaded, non-integrated spend.",
         ]
         if status == "Partially connected":
             lines.append(

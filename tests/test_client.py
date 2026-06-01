@@ -458,12 +458,17 @@ async def test_poll_export_result_raises_on_timeout(config, monkeypatch):
 
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-slow").mock(
-            return_value=httpx.Response(200, json={"status": "PROCESSING"})
+            return_value=httpx.Response(200, json={"status": "PENDING"})
         )
 
         async with NorthbeamClient(config) as client:
-            with pytest.raises(NorthbeamAPIError, match="timed out"):
+            with pytest.raises(NorthbeamAPIError) as exc_info:
                 await client.poll_export_result("exp-slow")
+
+    message = str(exc_info.value)
+    assert "did not finish" in message
+    assert "PENDING" in message
+    assert "queue may be busy" in message
 
 
 async def test_request_with_retry_sends_json_body(config):
@@ -616,3 +621,15 @@ async def test_download_export_csv_handles_quoted_newlines(config):
     assert len(result["data"]) == 2
     assert result["data"][0]["campaign_name"] == "Spring\nPromo"
     assert result["data"][1]["platform"] == "TikTok"
+
+
+def test_export_poll_timeout_reads_env(monkeypatch):
+    import importlib
+    import server.client as client_module
+    monkeypatch.setenv("NORTHBEAM_EXPORT_TIMEOUT", "240")
+    importlib.reload(client_module)
+    try:
+        assert client_module.EXPORT_POLL_TIMEOUT == 240.0
+    finally:
+        monkeypatch.delenv("NORTHBEAM_EXPORT_TIMEOUT", raising=False)
+        importlib.reload(client_module)

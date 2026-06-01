@@ -198,9 +198,15 @@ async def test_portfolio_health_graceful_export_failure(config, monkeypatch):
 
 async def test_portfolio_health_missing_config(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PWD", str(tmp_path))
     monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
     monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)
+    monkeypatch.delenv("NORTHBEAM_API_ENV", raising=False)
+    monkeypatch.delenv("NORTHBEAM_CREDENTIALS_FILE", raising=False)
+    monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_NORTHBEAM_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_NORTHBEAM_CLIENT_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_NORTHBEAM_API_ENV", raising=False)
 
     with pytest.raises(ToolError, match="Authentication failed"):
         await _portfolio_health(config=None, date_start="2026-04-14", date_end="2026-04-20")

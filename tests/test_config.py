@@ -43,6 +43,48 @@ def test_load_config_from_dotenv_file(monkeypatch, tmp_path):
     assert config.base_url == "https://api-uat.northbeam.io/v1"
 
 
+def test_load_config_from_codex_user_credentials_file(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("PWD", raising=False)
+    monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
+    monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)
+    monkeypatch.delenv("NORTHBEAM_API_ENV", raising=False)
+    credentials_dir = tmp_path / ".codex"
+    credentials_dir.mkdir()
+    credentials_dir.joinpath("northbeam.env").write_text(
+        "\n".join([
+            "NORTHBEAM_API_KEY=codex-file-key",
+            "NORTHBEAM_CLIENT_ID=codex-file-client",
+        ]),
+        encoding="utf-8",
+    )
+
+    config = load_config()
+
+    assert config.api_key == "codex-file-key"
+    assert config.client_id == "codex-file-client"
+    assert config.environment == "prod"
+
+
+def test_load_config_from_claude_plugin_options(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PWD", str(tmp_path))
+    monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
+    monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)
+    monkeypatch.delenv("NORTHBEAM_API_ENV", raising=False)
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_NORTHBEAM_API_KEY", "claude-key")
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_NORTHBEAM_CLIENT_ID", "claude-client")
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_NORTHBEAM_API_ENV", "uat")
+
+    config = load_config()
+
+    assert config.api_key == "claude-key"
+    assert config.client_id == "claude-client"
+    assert config.environment == "uat"
+
+
 def test_load_config_from_pwd_dotenv(monkeypatch, tmp_path):
     cache_dir = tmp_path / "cache"
     project_dir = tmp_path / "project"
@@ -65,6 +107,38 @@ def test_load_config_from_pwd_dotenv(monkeypatch, tmp_path):
 
     assert config.api_key == "pwd-dotenv-key"
     assert config.client_id == "pwd-dotenv-client"
+
+
+def test_load_dotenv_treats_unresolved_templates_as_missing(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PWD", str(tmp_path))
+    monkeypatch.setenv("NORTHBEAM_API_KEY", "${NORTHBEAM_API_KEY}")
+    monkeypatch.setenv("NORTHBEAM_CLIENT_ID", "${NORTHBEAM_CLIENT_ID}")
+    monkeypatch.setenv("NORTHBEAM_API_ENV", "${NORTHBEAM_API_ENV:-prod}")
+    tmp_path.joinpath(".env").write_text(
+        "\n".join([
+            "NORTHBEAM_API_KEY=dotenv-key",
+            "NORTHBEAM_CLIENT_ID=dotenv-client",
+        ]),
+        encoding="utf-8",
+    )
+
+    config = load_config()
+
+    assert config.api_key == "dotenv-key"
+    assert config.client_id == "dotenv-client"
+    assert config.environment == "prod"
+
+
+def test_load_config_rejects_unresolved_templates_without_fallback(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("PWD", raising=False)
+    monkeypatch.setenv("NORTHBEAM_API_KEY", "${NORTHBEAM_API_KEY}")
+    monkeypatch.setenv("NORTHBEAM_CLIENT_ID", "${NORTHBEAM_CLIENT_ID}")
+
+    with pytest.raises(NorthbeamConfigError, match="NORTHBEAM_API_KEY"):
+        load_config()
 
 
 def test_load_dotenv_ignores_comments_blanks_and_malformed_lines(monkeypatch, tmp_path):

@@ -25,7 +25,7 @@ The `northbeam_check_connection` tool is only needed by the `/northbeam:setup` s
 
 ### Load Business Context Profile
 
-Attempt to read `~/.codex/northbeam-profile.json`. If it exists, extract and use the following values throughout your analysis:
+Attempt to read `~/.northbeam/profile.json`. If it does not exist, check the legacy Codex path `~/.codex/northbeam-profile.json`. If a profile exists, extract and use the following values throughout your analysis:
 
 - `monthly_budgets` — per-channel budget targets (used for pacing calculations)
 - `targets` — KPI goals (CPC, CPM, CTR, ROAS, etc.)
@@ -36,7 +36,7 @@ Attempt to read `~/.codex/northbeam-profile.json`. If it exists, extract and use
 
 If the profile does not exist and the user asks budget-related questions, note:
 
-> "I don't have your budget targets on file. Run `/northbeam:setup` to save your monthly budgets and goals — that will unlock budget pacing and target-vs-actual comparisons."
+> "I don't have your budget targets on file. Run `/northbeam:setup` to save your monthly budgets and goals - that will unlock budget pacing and target-vs-actual comparisons."
 
 ---
 

@@ -10,18 +10,81 @@ conversions) through Northbeam's Spend and Data Export APIs.
 - [uv](https://docs.astral.sh/uv/) for Python dependency management
 - Northbeam API access: API Key and Client ID from **Settings > API Keys**
 
+## What The Plugin Installs
+
+The plugin has two parts that work together:
+
+- Skills: `/northbeam:setup` and `/northbeam:analyze` tell the assistant how to
+  help with Northbeam.
+- MCP server: the local Python process that securely calls the Northbeam API
+  when a skill needs real data.
+
+Non-technical users should install the plugin, save credentials once, then use
+plain-language requests like "Check portfolio health this month."
+
+## Claude Code Installation
+
+Claude Code has the cleanest credential flow because its plugin system prompts
+for plugin options when the plugin is enabled.
+
+1. Add the marketplace:
+
+   ```text
+   /plugin marketplace add domainmethods/northbeam-plugin
+   ```
+
+2. Install the plugin:
+
+   ```text
+   /plugin install northbeam@domainmethods/northbeam-plugin
+   ```
+
+3. When Claude Code asks for plugin configuration, paste:
+   - `NORTHBEAM_API_KEY`
+   - `NORTHBEAM_CLIENT_ID`
+   - `NORTHBEAM_API_ENV` (`prod` unless you use UAT)
+
+4. Reload plugins if you installed from an already-open session:
+
+   ```text
+   /reload-plugins
+   ```
+
+5. Run setup:
+
+   ```text
+   /northbeam:setup
+   ```
+
+Claude Code stores sensitive plugin values in its credential store. You should
+not need a `.env` file for the normal Claude Code path.
+
 ## Codex Installation
 
 ### Local Personal Marketplace
 
 Use this path when developing or installing this checkout directly.
 
-1. Make the plugin source available from your personal plugin directory:
+1. Sync a clean plugin copy into your personal plugin directory.
 
    ```bash
    mkdir -p ~/plugins ~/.agents/plugins
-   ln -sfn "$(pwd)" ~/plugins/northbeam
+   rsync -a --delete \
+     --include='.env.example' \
+     --exclude='.git/' \
+     --exclude='.env*' \
+     --exclude='.venv/' \
+     --exclude='.pytest_cache/' \
+     --exclude='__pycache__/' \
+     --exclude='*.pyc' \
+     --exclude='.spec-workflow/' \
+     --exclude='docs/' \
+     ./ ~/plugins/northbeam/
    ```
+
+   Run the same `rsync` command again after local edits and before reinstalling.
+   Do not point the marketplace at a working tree that contains real `.env`
+   credentials; Codex copies local plugin files into its plugin cache.
 
 2. Add the plugin to `~/.agents/plugins/marketplace.json`.
 
@@ -71,19 +134,27 @@ Use this path when developing or installing this checkout directly.
 
 ### Credentials
 
-The MCP server needs a Northbeam API Key and Client ID. For normal Codex usage,
-put them in the environment used to launch Codex.
+The MCP server needs a Northbeam API Key and Client ID. Codex does not currently
+use Claude Code's plugin `userConfig` credential prompt, so the normal Codex
+path is a small local credential file in your Codex home directory.
 
-Option 1: create a local `.env` file in the project directory where you start
-Codex:
+Recommended setup:
 
 ```bash
-cp .env.example .env
-# Edit .env with your real Northbeam values.
-codex
+uv run python -m server.setup_credentials
 ```
 
-Option 2: export the variables before starting Codex:
+If you already have a project `.env` file, copy it into the Codex credential
+file:
+
+```bash
+uv run python -m server.setup_credentials --from-dotenv .env
+```
+
+The helper writes `~/.codex/northbeam.env` with user-only file permissions.
+Restart Codex or open a new thread after saving credentials.
+
+Advanced alternative: export the variables before starting Codex:
 
 ```bash
 export NORTHBEAM_API_KEY="..."
@@ -92,12 +163,13 @@ export NORTHBEAM_API_ENV="prod"  # optional; use "uat" for UAT
 codex
 ```
 
-Existing environment variables take precedence over `.env` values. If you
-launch Codex from a desktop app or another process manager, configure these
-variables in that launch environment, then restart Codex or open a new thread.
+Existing real environment variables take precedence over credential files.
+Project `.env` files are supported for local development, but they are not the
+recommended Codex Desktop path because plugin MCP servers run from Codex's
+installed plugin copy, not necessarily from your project directory.
 
 Do not commit real credentials. `.env` is ignored; `.env.example` is the safe
-template to commit.
+template to commit. `~/.codex/northbeam.env` lives outside the repository.
 
 ### Verify Connection
 
@@ -108,7 +180,7 @@ In Codex, run:
 ```
 
 The setup skill validates your credentials and can create a business context
-profile at `~/.codex/northbeam-profile.json` for monthly budgets, KPI targets,
+profile at `~/.northbeam/profile.json` for monthly budgets, KPI targets,
 ROAS goals, and campaign naming conventions.
 
 ## Codex Usage
@@ -131,32 +203,6 @@ Show Facebook CPC and CPM for the last 14 days.
 Which campaigns should I watch for diminishing returns?
 Compare revenue and ROAS by channel for month to date.
 ```
-
-## Claude Code Installation
-
-This repository also includes a Claude Code plugin manifest.
-
-1. Add the marketplace:
-
-   ```bash
-   /plugin marketplace add domainmethods/northbeam-plugin
-   ```
-
-2. Install the plugin:
-
-   ```bash
-   /plugin install northbeam@domainmethods/northbeam-plugin
-   ```
-
-3. Run setup:
-
-   ```text
-   /northbeam:setup
-   ```
-
-Claude Code prompts for the Northbeam credentials declared in
-`.claude-plugin/plugin.json` and stores sensitive values through its plugin
-credential flow.
 
 ## Skills
 
@@ -199,9 +245,12 @@ These tools are available when the plugin is active:
 
 - Run `/northbeam:setup` to re-check your API key and client ID.
 - Verify the values in the Northbeam dashboard under **Settings > API Keys**.
-- For Codex, confirm the variables are available to the Codex process. If you
-  use `.env`, start Codex from the same project directory as that `.env` file.
-- Start a new Codex thread after changing credentials.
+- In Claude Code, open `/plugin`, reconfigure Northbeam, then run
+  `/reload-plugins`.
+- In Codex, run `uv run python -m server.setup_credentials` from this checkout,
+  or copy an existing `.env` with
+  `uv run python -m server.setup_credentials --from-dotenv .env`.
+- Start a new thread after changing credentials.
 
 ### MCP Server Will Not Start
 

@@ -3,12 +3,7 @@
     "northbeam": {
       "command": "uv",
       "args": ["run", "python", "-m", "server.northbeam_mcp"],
-      "cwd": ".",
-      "env": {
-        "NORTHBEAM_API_KEY": "${NORTHBEAM_API_KEY}",
-        "NORTHBEAM_CLIENT_ID": "${NORTHBEAM_CLIENT_ID}",
-        "NORTHBEAM_API_ENV": "${NORTHBEAM_API_ENV:-prod}"
-      }
+      "cwd": "."
     }
   }
 }

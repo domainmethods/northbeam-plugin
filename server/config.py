@@ -9,9 +9,22 @@ BASE_URLS = {
     "uat": "https://api-uat.northbeam.io/v1",
 }
 
+CLAUDE_OPTION_PREFIX = "CLAUDE_PLUGIN_OPTION_"
+
 
 class NorthbeamConfigError(Exception):
     pass
+
+
+def _is_missing_config_value(value: str | None) -> bool:
+    if value is None:
+        return True
+
+    stripped = value.strip()
+    if not stripped:
+        return True
+
+    return stripped.startswith("${") and stripped.endswith("}")
 
 
 def _strip_inline_comment(value: str) -> str:
@@ -36,12 +49,23 @@ def _strip_inline_comment(value: str) -> str:
 
 def _dotenv_candidates(dotenv_path: str | None) -> list[Path]:
     if dotenv_path is not None:
-        return [Path(dotenv_path)]
+        return [Path(dotenv_path).expanduser()]
 
-    candidates = [Path(".env")]
+    candidates: list[Path] = []
+    explicit_path = os.environ.get("NORTHBEAM_CREDENTIALS_FILE")
+    if explicit_path:
+        candidates.append(Path(explicit_path).expanduser())
+
+    candidates.append(Path(".env"))
     parent_cwd = os.environ.get("PWD")
     if parent_cwd:
-        candidates.append(Path(parent_cwd) / ".env")
+        candidates.append(Path(parent_cwd).expanduser() / ".env")
+
+    home = Path.home()
+    candidates.extend([
+        home / ".codex" / "northbeam.env",
+        home / ".northbeam" / "env",
+    ])
 
     unique_candidates: list[Path] = []
     for path in candidates:
@@ -74,8 +98,16 @@ def load_dotenv(dotenv_path: str | None = None) -> None:
                     continue
 
                 value = _strip_inline_comment(value.strip()).strip("'\"")
-                if not os.environ.get(key):
+                if _is_missing_config_value(os.environ.get(key)):
                     os.environ[key] = value
+
+
+def _get_config_value(name: str) -> str | None:
+    for key in (name, f"{CLAUDE_OPTION_PREFIX}{name}"):
+        value = os.getenv(key)
+        if not _is_missing_config_value(value):
+            return value.strip()
+    return None
 
 
 @dataclass(frozen=True)
@@ -96,21 +128,21 @@ class NorthbeamConfig:
 def load_config() -> NorthbeamConfig:
     load_dotenv()
 
-    api_key = os.getenv("NORTHBEAM_API_KEY")
-    if not api_key:
+    api_key = _get_config_value("NORTHBEAM_API_KEY")
+    if api_key is None:
         raise NorthbeamConfigError(
-            "NORTHBEAM_API_KEY environment variable is not set. "
+            "NORTHBEAM_API_KEY is not configured. "
             "Run /northbeam:setup for configuration instructions."
         )
 
-    client_id = os.getenv("NORTHBEAM_CLIENT_ID")
-    if not client_id:
+    client_id = _get_config_value("NORTHBEAM_CLIENT_ID")
+    if client_id is None:
         raise NorthbeamConfigError(
-            "NORTHBEAM_CLIENT_ID environment variable is not set. "
+            "NORTHBEAM_CLIENT_ID is not configured. "
             "Run /northbeam:setup for configuration instructions."
         )
 
-    environment = os.getenv("NORTHBEAM_API_ENV", "prod").lower()
+    environment = (_get_config_value("NORTHBEAM_API_ENV") or "prod").lower()
     base_url = BASE_URLS.get(environment, BASE_URLS["prod"])
 
     return NorthbeamConfig(

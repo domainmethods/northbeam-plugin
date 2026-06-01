@@ -109,9 +109,15 @@ async def test_check_connection_handles_empty_response(config):
 
 async def test_list_spend_missing_config_raises_tool_error(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PWD", str(tmp_path))
     monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
     monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)
+    monkeypatch.delenv("NORTHBEAM_API_ENV", raising=False)
+    monkeypatch.delenv("NORTHBEAM_CREDENTIALS_FILE", raising=False)
+    monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_NORTHBEAM_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_NORTHBEAM_CLIENT_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_NORTHBEAM_API_ENV", raising=False)
 
     with pytest.raises(ToolError, match="Authentication failed"):
         await _list_spend(config=None, date="2026-04-20")
@@ -154,9 +160,15 @@ async def test_list_options_unwraps_exception_group_auth_error(config):
 
 async def test_list_options_missing_config_raises_tool_error(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PWD", str(tmp_path))
     monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
     monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)
+    monkeypatch.delenv("NORTHBEAM_API_ENV", raising=False)
+    monkeypatch.delenv("NORTHBEAM_CREDENTIALS_FILE", raising=False)
+    monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_NORTHBEAM_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_NORTHBEAM_CLIENT_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_NORTHBEAM_API_ENV", raising=False)
 
     with pytest.raises(ToolError, match="Authentication failed"):
         await _list_options(config=None)

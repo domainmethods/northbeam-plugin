@@ -1,23 +1,30 @@
 {
   "name": "northbeam",
   "description": "Northbeam Spend Intelligence — strategic spend analysis, anomaly detection, and budget optimization via the Northbeam API",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": {
     "name": "WeightCare"
   },
+  "mcpServers": "./.mcp.claude.json",
   "userConfig": {
     "NORTHBEAM_API_KEY": {
-      "description": "Northbeam API key (from Settings → API Keys in the Northbeam dashboard)",
+      "type": "string",
+      "title": "Northbeam API Key",
+      "description": "Northbeam API key from Settings > API Keys in the Northbeam dashboard.",
       "required": true,
       "sensitive": true
     },
     "NORTHBEAM_CLIENT_ID": {
-      "description": "Northbeam Client ID (from Settings → API Keys in the Northbeam dashboard)",
+      "type": "string",
+      "title": "Northbeam Client ID",
+      "description": "Northbeam Client ID from Settings > API Keys in the Northbeam dashboard.",
       "required": true,
       "sensitive": true
     },
     "NORTHBEAM_API_ENV": {
-      "description": "API environment: prod or uat",
+      "type": "string",
+      "title": "Northbeam API Environment",
+      "description": "API environment: prod or uat.",
       "required": false,
       "default": "prod"
     }

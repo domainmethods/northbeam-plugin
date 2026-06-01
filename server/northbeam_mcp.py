@@ -376,6 +376,114 @@ async def _list_options(config: NorthbeamConfig | None = None) -> dict[str, Any]
         raise ToolError(f"Error fetching export options: {e}")
 
 
+SPEND_EXPORT_METRICS = ["spend", "impressions", "ecpc"]
+_VALID_SPEND_BREAKDOWNS = ("platform", "campaign")
+
+
+async def _spend_via_export(
+    config: NorthbeamConfig | None = None,
+    date_start: str = "",
+    date_end: str = "",
+    platform_name: str | None = None,
+    breakdown: str = "platform",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
+) -> dict[str, Any]:
+    """Source spend + efficiency (impressions, clicks, CPC, CPM, CTR) from the
+    Data Export API, by platform (default) or by campaign. Spend is
+    attribution-independent; the defaults match the account's UI default.
+
+    breakdown="campaign" sends level=campaign (campaign is the export level, NOT
+    a Northbeam breakdown dimension) with a Platform payload breakdown, then
+    aggregates on platform + campaign_name so campaigns never collapse."""
+    breakdown = (breakdown or "platform").lower()
+    if breakdown not in _VALID_SPEND_BREAKDOWNS:
+        raise ToolError(
+            f"Unsupported breakdown {breakdown!r}; use 'platform' or 'campaign'."
+        )
+    if breakdown == "campaign":
+        level = "campaign"
+        aggregation_breakdowns = ["platform", "campaign_name"]
+        campaign_key = "campaign_name"
+    else:
+        level = "platform"
+        aggregation_breakdowns = ["platform"]
+        campaign_key = None
+
+    try:
+        if config is None:
+            config = load_config()
+        async with NorthbeamClient(config) as client:
+            body = await _build_export_body(
+                client,
+                date_start=date_start,
+                date_end=date_end,
+                metrics=SPEND_EXPORT_METRICS,
+                breakdowns=["platform"],
+                attribution_model=attribution_model,
+                attribution_window=attribution_window,
+                level=level,
+            )
+            aggregated = await _run_export_pipeline(
+                client, body,
+                breakdowns=aggregation_breakdowns,
+                metrics=SPEND_EXPORT_METRICS,
+            )
+
+        rows = _spend_rows_from_aggregated(aggregated, campaign_key=campaign_key)
+        if platform_name:
+            needle = platform_name.lower()
+            rows = [r for r in rows if (r.get("platform_name") or "").lower() == needle]
+
+        return {
+            "data": rows,
+            "total_count": len(rows),
+            "date_range": {"start": date_start, "end": date_end},
+        }
+    except (NorthbeamAuthError, NorthbeamConfigError):
+        raise ToolError(AUTH_ERROR_MSG) from None
+    except ExceptionGroup as eg:
+        if _exception_group_contains_auth_error(eg):
+            raise ToolError(AUTH_ERROR_MSG) from None
+        logger.error("spend export error: %r", eg)
+        raise ToolError(f"Error querying Northbeam spend: {eg.exceptions[0]}") from None
+    except ToolError:
+        raise
+    except Exception as e:
+        logger.error("spend export error: %s", e)
+        raise ToolError(f"Error querying Northbeam spend: {e}")
+
+
+@mcp.tool()
+async def northbeam_spend(
+    date_start: str,
+    date_end: str,
+    platform_name: str | None = None,
+    breakdown: str = "platform",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
+) -> dict[str, Any]:
+    """Query ad spend and efficiency (spend, impressions, clicks, CPC, CPM, CTR)
+    from the Northbeam Data Export API. This is the source of truth for spend on
+    natively-integrated accounts (Facebook/Google/TikTok).
+
+    Date format: YYYY-MM-DD. platform_name filters results (case-insensitive).
+    breakdown="platform" (default) returns one row per platform; "campaign"
+    returns one row per campaign (with platform_name + campaign_name) for
+    campaign-level analysis (anomalies, fatigue, naming intelligence). Defaults
+    match the account's UI default (Clicks only / 1-day / accrual); spend itself
+    is attribution-independent.
+    """
+    return await _spend_via_export(
+        date_start=date_start,
+        date_end=date_end,
+        platform_name=platform_name,
+        breakdown=breakdown,
+        attribution_model=attribution_model,
+        attribution_window=attribution_window,
+    )
+
+
 def _select_accounting_partition(
     rows: list[dict[str, str]],
     accounting_mode: str | None,
@@ -462,6 +570,7 @@ async def _build_export_body(
     breakdowns: list[str],
     attribution_model: str,
     attribution_window: str,
+    level: str = "platform",
 ) -> dict[str, Any]:
     try:
         breakdown_values = None
@@ -479,6 +588,7 @@ async def _build_export_body(
             attribution_model=attribution_model,
             attribution_window=attribution_window,
             breakdown_values=breakdown_values,
+            level=level,
         )
     except ValueError as e:
         raise ToolError(str(e)) from None

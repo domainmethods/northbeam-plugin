@@ -8,7 +8,7 @@ from server.northbeam_mcp import (
     _list_spend, _check_connection, _list_options, _data_export,
     _aggregate_export_rows, _enrich_spend_rows, MAX_RESULT_ROWS,
     _spend_rows_from_aggregated, _compute_blended_metrics,
-    _aggregate_spend_by_platform,
+    _aggregate_spend_by_platform, _spend_via_export,
 )
 
 import server.client as client_module
@@ -1008,3 +1008,143 @@ def test_spend_rows_from_aggregated_omits_campaign_name_by_default():
     rows = _spend_rows_from_aggregated(aggregated)
 
     assert "campaign_name" not in rows[0]
+
+
+async def test_spend_via_export_returns_legacy_spend_shape(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    csv_content = (
+        "breakdown_platform_northbeam,spend,imprs,ecpc\n"
+        "Facebook Ads,407056.74,10000000,0.50\n"
+        "TikTok,70866.64,3000000,0.40\n"
+    )
+
+    with respx.mock:
+        _mock_export_options(sample_export_options)
+        post_route = respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        result = await _spend_via_export(
+            config=config,
+            date_start="2026-05-01",
+            date_end="2026-05-31",
+        )
+
+    sent = json.loads(post_route.calls[0].request.content)
+    assert sent["metrics"] == [{"id": "spend"}, {"id": "impressions"}, {"id": "ecpc"}]
+    assert sent["attribution_options"]["attribution_models"] == ["northbeam_custom"]
+    assert sent["attribution_options"]["attribution_windows"] == ["1"]
+
+    assert result["total_count"] == 2
+    fb = next(r for r in result["data"] if r["platform_name"] == "Facebook Ads")
+    assert fb["spend"] == 407056.74
+    assert fb["impressions"] == 10000000.0
+    assert fb["clicks"] == 407056.74 / 0.50
+    assert fb["cpc"] == 0.5
+
+
+async def test_spend_via_export_filters_by_platform_name(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    csv_content = (
+        "breakdown_platform_northbeam,spend,imprs,ecpc\n"
+        "Facebook Ads,407056.74,10000000,0.50\n"
+        "TikTok,70866.64,3000000,0.40\n"
+    )
+
+    with respx.mock:
+        _mock_export_options(sample_export_options)
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        result = await _spend_via_export(
+            config=config,
+            date_start="2026-05-01",
+            date_end="2026-05-31",
+            platform_name="facebook ads",
+        )
+
+    assert result["total_count"] == 1
+    assert result["data"][0]["platform_name"] == "Facebook Ads"
+
+
+async def test_spend_via_export_campaign_breakdown_keeps_campaigns_separate(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    # level=campaign CSV: two campaigns under the SAME platform must not collapse.
+    csv_content = (
+        "breakdown_platform_northbeam,campaign_name,spend,imprs,ecpc\n"
+        "Facebook Ads,PARTNERSHIPS-CBO,798.61,63490,1.0676604278\n"
+        "Facebook Ads,SINGLE-FUNNEL,1212.45,48732,2.9937037037\n"
+    )
+
+    with respx.mock:
+        _mock_export_options(sample_export_options)
+        post_route = respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        result = await _spend_via_export(
+            config=config,
+            date_start="2026-05-01",
+            date_end="2026-05-31",
+            breakdown="campaign",
+        )
+
+    sent = json.loads(post_route.calls[0].request.content)
+    assert sent["level"] == "campaign"
+    payload_breakdown_keys = [b["key"] for b in sent["breakdowns"]]
+    assert payload_breakdown_keys == ["Platform (Northbeam)"]
+    assert "campaign_name" not in payload_breakdown_keys
+
+    assert result["total_count"] == 2
+    names = {r["campaign_name"] for r in result["data"]}
+    assert names == {"PARTNERSHIPS-CBO", "SINGLE-FUNNEL"}
+    cbo = next(r for r in result["data"] if r["campaign_name"] == "PARTNERSHIPS-CBO")
+    assert cbo["platform_name"] == "Facebook Ads"
+    assert cbo["spend"] == 798.61
+
+
+async def test_spend_via_export_rejects_unknown_breakdown(config):
+    with pytest.raises(ToolError):
+        await _spend_via_export(
+            config=config,
+            date_start="2026-05-01",
+            date_end="2026-05-31",
+            breakdown="adset",
+        )

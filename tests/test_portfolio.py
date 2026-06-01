@@ -188,7 +188,7 @@ async def test_portfolio_health_auth_error(config):
             )
 
 
-async def test_portfolio_health_export_failure_raises(config, monkeypatch):
+async def test_portfolio_health_export_failure_raises(config):
     """The combined export is the only data source; a failure is a ToolError."""
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(

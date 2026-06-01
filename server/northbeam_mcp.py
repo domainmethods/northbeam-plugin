@@ -896,10 +896,10 @@ async def _portfolio_health(
     except ExceptionGroup as eg:
         if _exception_group_contains_auth_error(eg):
             raise ToolError(AUTH_ERROR_MSG) from None
-        logger.error("portfolio_health error: %s", eg)
+        logger.error("portfolio_health error: %r", eg)
         raise ToolError(
             f"Error building portfolio health: {_format_exception_message(eg)}"
-        )
+        ) from None
     except Exception as e:
         logger.error("portfolio_health error: %s", e)
         raise ToolError(f"Error building portfolio health: {e}")

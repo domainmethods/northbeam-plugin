@@ -624,12 +624,12 @@ async def test_download_export_csv_handles_quoted_newlines(config):
 
 
 def test_export_poll_timeout_reads_env(monkeypatch):
-    import importlib
     import server.client as client_module
     monkeypatch.setenv("NORTHBEAM_EXPORT_TIMEOUT", "240")
-    importlib.reload(client_module)
-    try:
-        assert client_module.EXPORT_POLL_TIMEOUT == 240.0
-    finally:
-        monkeypatch.delenv("NORTHBEAM_EXPORT_TIMEOUT", raising=False)
-        importlib.reload(client_module)
+    assert client_module._resolve_poll_timeout() == 240.0
+
+
+def test_export_poll_timeout_defaults_without_env(monkeypatch):
+    import server.client as client_module
+    monkeypatch.delenv("NORTHBEAM_EXPORT_TIMEOUT", raising=False)
+    assert client_module._resolve_poll_timeout() == 180.0

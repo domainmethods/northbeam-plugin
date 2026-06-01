@@ -14,7 +14,18 @@ from server.config import NorthbeamConfig
 MAX_RETRIES = 3
 INITIAL_BACKOFF = 0.5
 EXPORT_POLL_INTERVAL = 2.0
-EXPORT_POLL_TIMEOUT = float(os.environ.get("NORTHBEAM_EXPORT_TIMEOUT", "180.0"))
+
+
+def _resolve_poll_timeout() -> float:
+    """Read the export poll timeout (seconds) from the environment.
+
+    Factored out so tests can verify env handling without reloading the module
+    (reloading rebinds this module's exception classes and breaks isinstance
+    checks in already-imported callers)."""
+    return float(os.environ.get("NORTHBEAM_EXPORT_TIMEOUT", "180.0"))
+
+
+EXPORT_POLL_TIMEOUT = _resolve_poll_timeout()
 DOWNLOAD_TIMEOUT = 60.0
 EXPORT_SUCCESS_STATUSES = {"COMPLETED", "SUCCESS"}
 EXPORT_FAILURE_STATUSES = {"FAILED", "FAILURE"}

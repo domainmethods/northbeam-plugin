@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import sys
 from collections import defaultdict
@@ -838,12 +837,15 @@ async def _run_export_pipeline(
     return []
 
 
+PORTFOLIO_EXPORT_METRICS = ["spend", "impressions", "ecpc", "revAttributed", "roas"]
+
+
 async def _portfolio_health(
     config: NorthbeamConfig | None = None,
     date_start: str = "",
     date_end: str = "",
-    attribution_model: str = "northbeam_custom__va",
-    attribution_window: str = "7",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
 ) -> dict[str, Any]:
     try:
         if config is None:
@@ -855,87 +857,37 @@ async def _portfolio_health(
             date_start = date_start or today.replace(day=1).isoformat()
 
         async with NorthbeamClient(config) as client:
-            export_result: list[dict[str, Any]] | BaseException | None = None
-            try:
-                export_body = await _build_export_body(
-                    client,
-                    date_start=date_start,
-                    date_end=date_end,
-                    metrics=["rev", "roas"],
-                    breakdowns=["platform"],
-                    attribution_model=attribution_model,
-                    attribution_window=attribution_window,
-                )
-            except (NorthbeamAuthError, NorthbeamConfigError):
-                raise
-            except ExceptionGroup as eg:
-                if _exception_group_contains_auth_error(eg):
-                    raise NorthbeamAuthError(str(eg)) from eg
-                export_result = RuntimeError(_format_exception_message(eg))
-            except Exception as e:
-                export_result = e
+            export_body = await _build_export_body(
+                client,
+                date_start=date_start,
+                date_end=date_end,
+                metrics=PORTFOLIO_EXPORT_METRICS,
+                breakdowns=["platform"],
+                attribution_model=attribution_model,
+                attribution_window=attribution_window,
+            )
+            aggregated = await _run_export_pipeline(
+                client,
+                export_body,
+                breakdowns=["platform"],
+                metrics=PORTFOLIO_EXPORT_METRICS,
+            )
 
-            if export_result is None:
-                spend_task = asyncio.create_task(
-                    client.list_spend(
-                        date_start=date_start,
-                        date_end=date_end,
-                        fetch_all=True,
-                    )
-                )
-                export_task = asyncio.create_task(
-                    _run_export_pipeline(
-                        client,
-                        export_body,
-                        breakdowns=["platform"],
-                        metrics=["rev", "roas"],
-                    )
-                )
-                spend_result, export_result = await asyncio.gather(
-                    spend_task, export_task, return_exceptions=True
-                )
-            else:
-                try:
-                    spend_result = await client.list_spend(
-                        date_start=date_start,
-                        date_end=date_end,
-                        fetch_all=True,
-                    )
-                except Exception as e:
-                    spend_result = e
-
-        if isinstance(spend_result, Exception):
-            if isinstance(spend_result, (NorthbeamAuthError, NorthbeamConfigError)):
-                raise ToolError(AUTH_ERROR_MSG) from None
-            raise ToolError(f"Spend query failed: {spend_result}")
-
-        spend_rows = spend_result.get("data") or []
+        spend_rows = _spend_rows_from_aggregated(aggregated)
         blended = _compute_blended_metrics(spend_rows)
         by_platform = _aggregate_spend_by_platform(spend_rows)
 
-        outcome_data = None
-        outcome_error = None
-        if isinstance(export_result, Exception):
-            outcome_error = str(export_result)
-        else:
-            outcome_data = export_result
-
-        response: dict[str, Any] = {
+        return {
             "summary": {
                 "date_range": {"start": date_start, "end": date_end},
                 "attribution_model": attribution_model,
+                "attribution_window": attribution_window,
                 "record_count": len(spend_rows),
                 **blended,
             },
             "spend_by_platform": by_platform,
+            "outcomes": aggregated,
         }
-
-        if outcome_data is not None:
-            response["outcomes"] = outcome_data
-        if outcome_error is not None:
-            response["outcome_error"] = outcome_error
-
-        return response
 
     except (NorthbeamAuthError, NorthbeamConfigError):
         raise ToolError(AUTH_ERROR_MSG) from None
@@ -945,7 +897,9 @@ async def _portfolio_health(
         if _exception_group_contains_auth_error(eg):
             raise ToolError(AUTH_ERROR_MSG) from None
         logger.error("portfolio_health error: %s", eg)
-        raise ToolError(f"Error building portfolio health: {_format_exception_message(eg)}")
+        raise ToolError(
+            f"Error building portfolio health: {_format_exception_message(eg)}"
+        )
     except Exception as e:
         logger.error("portfolio_health error: %s", e)
         raise ToolError(f"Error building portfolio health: {e}")
@@ -955,17 +909,18 @@ async def _portfolio_health(
 async def northbeam_portfolio_health(
     date_start: str = "",
     date_end: str = "",
-    attribution_model: str = "northbeam_custom__va",
-    attribution_window: str = "7",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
 ) -> dict[str, Any]:
     """Get a holistic portfolio health snapshot combining spend efficiency
-    metrics (CPC, CPM, CTR) with outcome metrics (revenue, ROAS).
+    (CPC, CPM, CTR) with outcomes (revAttributed, ROAS), all from one Data
+    Export so spend and revenue come from the same accrual rows.
 
-    Runs spend and data export queries concurrently for faster results.
-    Defaults to month-to-date if no dates provided.
+    Defaults to month-to-date and the account's UI attribution default
+    (Clicks only / 1-day / accrual).
 
-    Returns: blended metrics, per-platform breakdown with spend share,
-    and outcome data aggregated by platform.
+    Returns: blended metrics, per-platform breakdown with spend share, and
+    per-platform outcomes (revAttributed, roas).
     """
     return await _portfolio_health(
         date_start=date_start,

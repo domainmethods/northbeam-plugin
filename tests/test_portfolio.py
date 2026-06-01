@@ -102,29 +102,19 @@ async def test_portfolio_health_full_flow(
     config,
     sample_export_create_response,
     sample_export_completed_response,
-    sample_export_csv,
     monkeypatch,
 ):
     monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
 
-    spend_response = {
-        "data": [
-            {"platform_name": "Facebook", "spend": 150, "clicks": 180, "impressions": 12000,
-             "date": "2026-04-20", "platform_account_id": "", "campaign_id": "c1",
-             "campaign_name": "C1", "spend_currency": "USD",
-             "created_at": "2026-04-20T00:00:00Z", "updated_at": "2026-04-20T00:00:00Z"},
-            {"platform_name": "TikTok", "spend": 50, "clicks": 25, "impressions": 5000,
-             "date": "2026-04-20", "platform_account_id": "", "campaign_id": "c2",
-             "campaign_name": "C2", "spend_currency": "USD",
-             "created_at": "2026-04-20T00:00:00Z", "updated_at": "2026-04-20T00:00:00Z"},
-        ],
-        "page": 1, "page_size": 1000, "total_pages": 1, "total_count": 2,
-    }
+    csv_content = (
+        "breakdown_platform_northbeam,spend,imprs,ecpc,revAttributed,roas,accounting_mode\n"
+        "Facebook Ads,407056.74,10000000,0.50,89097.31,0.22,Accrual performance\n"
+        "Facebook Ads,407056.74,10000000,0.50,154000.00,0.38,Cash snapshot\n"
+        "TikTok,70866.64,3000000,0.40,20000.00,0.28,Accrual performance\n"
+        "TikTok,70866.64,3000000,0.40,30000.00,0.42,Cash snapshot\n"
+    )
 
     with respx.mock:
-        respx.get("https://api.northbeam.io/v1/spend").mock(
-            return_value=httpx.Response(200, json=spend_response)
-        )
         respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
             return_value=httpx.Response(200, json={
                 "breakdowns": [
@@ -133,11 +123,11 @@ async def test_portfolio_health_full_flow(
             })
         )
         respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
-            return_value=httpx.Response(200, json={"metrics": [{"id": "rev"}, {"id": "roas"}]})
+            return_value=httpx.Response(200, json={"metrics": [{"id": "spend"}]})
         )
         respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
             return_value=httpx.Response(200, json={
-                "attribution_models": [{"id": "northbeam_custom__va"}]
+                "attribution_models": [{"id": "northbeam_custom"}]
             })
         )
         post_route = respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
@@ -147,33 +137,32 @@ async def test_portfolio_health_full_flow(
             return_value=httpx.Response(200, json=sample_export_completed_response)
         )
         respx.get("https://storage.example.com/export.csv").mock(
-            return_value=httpx.Response(200, text=sample_export_csv)
+            return_value=httpx.Response(200, text=csv_content)
         )
 
         result = await _portfolio_health(
             config=config,
-            date_start="2026-04-14",
-            date_end="2026-04-20",
+            date_start="2026-05-01",
+            date_end="2026-05-31",
         )
 
     sent = json.loads(post_route.calls[0].request.content)
-    assert sent["metrics"] == [{"id": "rev"}, {"id": "roas"}]
-    assert sent["breakdowns"] == [
-        {"key": "Platform (Northbeam)", "values": ["Facebook Ads", "TikTok"]}
+    assert sent["metrics"] == [
+        {"id": "spend"}, {"id": "impressions"}, {"id": "ecpc"},
+        {"id": "revAttributed"}, {"id": "roas"},
     ]
-    assert "date_start" not in sent
-    assert "date_end" not in sent
-    assert "attribution_model" not in sent
-    assert "attribution_window" not in sent
-    assert result["summary"]["total_spend"] == 200.0
-    assert result["summary"]["total_clicks"] == 205
-    assert result["summary"]["blended_cpc"] is not None
-    assert result["summary"]["date_range"] == {"start": "2026-04-14", "end": "2026-04-20"}
-    assert len(result["spend_by_platform"]) == 2
-    assert result["spend_by_platform"][0]["platform"] == "Facebook"
-    assert "outcomes" in result
-    assert len(result["outcomes"]) == 2
-    assert result["outcomes"][0]["platform"] == "Facebook Ads"
+    assert sent["attribution_options"]["attribution_models"] == ["northbeam_custom"]
+    assert sent["attribution_options"]["attribution_windows"] == ["1"]
+
+    # Fan-out (Cash snapshot) rows dropped: spend not doubled.
+    assert result["summary"]["total_spend"] == 477923.38  # 407056.74 + 70866.64
+    fb = result["spend_by_platform"][0]
+    assert fb["platform"] == "Facebook Ads"
+    assert fb["spend"] == 407056.74
+
+    outcomes = {o["platform"]: o for o in result["outcomes"]}
+    assert outcomes["Facebook Ads"]["revAttributed"] == 89097.31
+    assert outcomes["Facebook Ads"]["roas"] == 0.22
 
 
 async def test_portfolio_health_auth_error(config):
@@ -185,9 +174,6 @@ async def test_portfolio_health_auth_error(config):
             return_value=httpx.Response(401, json={"message": "Bad key"})
         )
         respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
-            return_value=httpx.Response(401, json={"message": "Bad key"})
-        )
-        respx.get("https://api.northbeam.io/v1/spend").mock(
             return_value=httpx.Response(401, json={"message": "Bad key"})
         )
         respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
@@ -202,16 +188,8 @@ async def test_portfolio_health_auth_error(config):
             )
 
 
-async def test_portfolio_health_graceful_export_failure(config, monkeypatch):
-    """If data export fails but spend succeeds, return spend data with error note."""
-    spend_response = {
-        "data": [
-            {"platform_name": "Facebook", "spend": 100, "clicks": 50, "impressions": 10000,
-             "date": "2026-04-20"},
-        ],
-        "page": 1, "page_size": 1000, "total_pages": 1, "total_count": 1,
-    }
-
+async def test_portfolio_health_export_failure_raises(config, monkeypatch):
+    """The combined export is the only data source; a failure is a ToolError."""
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
             return_value=httpx.Response(200, json={
@@ -221,70 +199,46 @@ async def test_portfolio_health_graceful_export_failure(config, monkeypatch):
             })
         )
         respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
-            return_value=httpx.Response(200, json={"metrics": [{"id": "rev"}, {"id": "roas"}]})
+            return_value=httpx.Response(200, json={"metrics": [{"id": "spend"}]})
         )
         respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
             return_value=httpx.Response(200, json={
-                "attribution_models": [{"id": "northbeam_custom__va"}]
+                "attribution_models": [{"id": "northbeam_custom"}]
             })
-        )
-        respx.get("https://api.northbeam.io/v1/spend").mock(
-            return_value=httpx.Response(200, json=spend_response)
         )
         respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
             return_value=httpx.Response(500, json={"message": "Internal error"})
         )
 
-        result = await _portfolio_health(
-            config=config,
-            date_start="2026-04-14",
-            date_end="2026-04-20",
-        )
-
-    assert result["summary"]["total_spend"] == 100.0
-    assert len(result["spend_by_platform"]) == 1
-    assert "outcomes" not in result
-    assert "outcome_error" in result
+        with pytest.raises(ToolError, match="portfolio health"):
+            await _portfolio_health(
+                config=config,
+                date_start="2026-05-01",
+                date_end="2026-05-31",
+            )
 
 
-async def test_portfolio_health_graceful_metadata_failure(config, monkeypatch):
-    """If export metadata fails but spend succeeds, return spend data with error note."""
+async def test_portfolio_health_metadata_failure_raises(config, monkeypatch):
     monkeypatch.setattr(client_module, "INITIAL_BACKOFF", 0)
-    spend_response = {
-        "data": [
-            {"platform_name": "Facebook", "spend": 100, "clicks": 50, "impressions": 10000,
-             "date": "2026-04-20"},
-        ],
-        "page": 1, "page_size": 1000, "total_pages": 1, "total_count": 1,
-    }
-
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
             return_value=httpx.Response(500, json={"message": "Metadata unavailable"})
         )
         respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
-            return_value=httpx.Response(200, json={"metrics": [{"id": "rev"}, {"id": "roas"}]})
+            return_value=httpx.Response(200, json={"metrics": [{"id": "spend"}]})
         )
         respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
             return_value=httpx.Response(200, json={
-                "attribution_models": [{"id": "northbeam_custom__va"}]
+                "attribution_models": [{"id": "northbeam_custom"}]
             })
         )
-        respx.get("https://api.northbeam.io/v1/spend").mock(
-            return_value=httpx.Response(200, json=spend_response)
-        )
 
-        result = await _portfolio_health(
-            config=config,
-            date_start="2026-04-14",
-            date_end="2026-04-20",
-        )
-
-    assert result["summary"]["total_spend"] == 100.0
-    assert len(result["spend_by_platform"]) == 1
-    assert "outcomes" not in result
-    assert "outcome_error" in result
-    assert "Metadata unavailable" in result["outcome_error"]
+        with pytest.raises(ToolError, match="portfolio health"):
+            await _portfolio_health(
+                config=config,
+                date_start="2026-05-01",
+                date_end="2026-05-31",
+            )
 
 
 async def test_portfolio_health_missing_config(monkeypatch, tmp_path):

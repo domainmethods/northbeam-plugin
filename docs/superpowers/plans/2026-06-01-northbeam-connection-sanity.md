@@ -532,13 +532,13 @@ async def test_data_export_fetches_breakdown_values_for_non_empty_breakdowns(
     csv_content = "breakdown_platform_northbeam,rev\nFacebook Ads,100\nTikTok,50\n"
 
     with respx.mock:
-        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+        breakdowns_route = respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
             return_value=httpx.Response(200, json=sample_export_options["breakdowns"])
         )
-        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+        metrics_route = respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
             return_value=httpx.Response(200, json=sample_export_options["metrics"])
         )
-        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+        models_route = respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
             return_value=httpx.Response(200, json=sample_export_options["attribution_models"])
         )
         post_route = respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
@@ -563,6 +563,9 @@ async def test_data_export_fetches_breakdown_values_for_non_empty_breakdowns(
     assert sent["breakdowns"] == [
         {"key": "Platform (Northbeam)", "values": ["Facebook Ads", "TikTok"]}
     ]
+    assert breakdowns_route.called
+    assert metrics_route.called
+    assert models_route.called
     assert result["data"][0]["platform"] == "Facebook Ads"
     assert result["data"][0]["rev"] == 100.0
 ```
@@ -778,13 +781,13 @@ async def test_check_connection_reports_spend_and_outcome_surfaces(
         respx.get("https://api.northbeam.io/v1/spend").mock(
             return_value=httpx.Response(200, json=spend_response)
         )
-        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+        breakdowns_route = respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
             return_value=httpx.Response(200, json=sample_export_options["breakdowns"])
         )
-        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+        metrics_route = respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
             return_value=httpx.Response(200, json=sample_export_options["metrics"])
         )
-        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+        models_route = respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
             return_value=httpx.Response(200, json=sample_export_options["attribution_models"])
         )
         respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
@@ -806,6 +809,9 @@ async def test_check_connection_reports_spend_and_outcome_surfaces(
     assert "Data Export API: OK - transactions=80.39, revenue=18372.97 for 2026-05-31" in result
     assert "spend rows are ad spend records, not orders or transactions" in result
     assert "Outcome data exists even though spend rows are zero" in result
+    assert breakdowns_route.called
+    assert metrics_route.called
+    assert models_route.called
 ```
 
 Add:
@@ -827,13 +833,13 @@ async def test_check_connection_reports_partial_data_export_failure(
         respx.get("https://api.northbeam.io/v1/spend").mock(
             return_value=httpx.Response(200, json=spend_response)
         )
-        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+        breakdowns_route = respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
             return_value=httpx.Response(200, json=sample_export_options["breakdowns"])
         )
-        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+        metrics_route = respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
             return_value=httpx.Response(200, json=sample_export_options["metrics"])
         )
-        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+        models_route = respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
             return_value=httpx.Response(200, json=sample_export_options["attribution_models"])
         )
         respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
@@ -846,6 +852,43 @@ async def test_check_connection_reports_partial_data_export_failure(
     assert "Spend API: OK" in result
     assert "Data Export metadata: OK" in result
     assert "Data Export API: Failed" in result
+    assert breakdowns_route.called
+    assert metrics_route.called
+    assert models_route.called
+```
+
+Add:
+
+```python
+async def test_check_connection_reports_partial_metadata_failure(config):
+    spend_response = {
+        "data": [],
+        "page": 1,
+        "page_size": 1000,
+        "total_pages": 1,
+        "total_count": 0,
+    }
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, json=spend_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(500, json={"message": "metadata unavailable"})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json={"metrics": []})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json={"attribution_models": []})
+        )
+
+        result = await _check_connection(config=config, check_date="2026-05-31")
+
+    assert "Status: Partially connected" in result
+    assert "Spend API: OK" in result
+    assert "Data Export metadata: Failed" in result
+    assert "Data Export API: Skipped - metadata check failed" in result
 ```
 
 - [ ] **Step 2: Run setup tests to verify they fail**
@@ -853,7 +896,7 @@ async def test_check_connection_reports_partial_data_export_failure(
 Run:
 
 ```bash
-uv run pytest tests/test_tools.py::test_check_connection_reports_spend_and_outcome_surfaces tests/test_tools.py::test_check_connection_reports_partial_data_export_failure -v
+uv run pytest tests/test_tools.py::test_check_connection_reports_spend_and_outcome_surfaces tests/test_tools.py::test_check_connection_reports_partial_data_export_failure tests/test_tools.py::test_check_connection_reports_partial_metadata_failure -v
 ```
 
 Expected: FAIL because `_check_connection` does not accept `check_date` and only checks spend.
@@ -897,6 +940,14 @@ async def _run_outcome_sanity_probe(
     }
 ```
 
+Add a metadata probe helper:
+
+```python
+async def _run_metadata_sanity_probe(client: NorthbeamClient) -> str:
+    await client.list_export_options()
+    return "Data Export metadata: OK - metrics, breakdowns, attribution models available"
+```
+
 If `_run_export_pipeline` still only accepts `body`, update it to:
 
 ```python
@@ -915,24 +966,33 @@ Use `breakdowns` and `metrics` when aggregating, because current request body no
 return _aggregate_export_rows(raw_rows, breakdowns, metrics) if raw_rows else []
 ```
 
-Implement status lines in `_check_connection`:
+Initialize export status before the Data Export try block:
 
 ```python
 status = "Connected"
-metadata_line = "Data Export metadata: OK - metrics, breakdowns, attribution models available"
-outcome_line = (
-    "Data Export API: OK - "
-    f"transactions={outcome['transactions']:.2f}, "
-    f"revenue={outcome['revenue']:.2f} for {yesterday}"
-)
+metadata_line: str | None = None
+outcome_line = "Data Export API: Skipped"
+outcome = {"transactions": 0.0, "revenue": 0.0}
 ```
 
-Catch non-auth export failures and switch status to partial:
+Then run metadata before the outcome export so metadata failures are distinguishable:
 
 ```python
+try:
+    metadata_line = await _run_metadata_sanity_probe(client)
+    outcome = await _run_outcome_sanity_probe(client, check_date=yesterday)
+    outcome_line = (
+        "Data Export API: OK - "
+        f"transactions={outcome['transactions']:.2f}, "
+        f"revenue={outcome['revenue']:.2f} for {yesterday}"
+    )
 except Exception as e:
     status = "Partially connected"
-    outcome_line = f"Data Export API: Failed - {e}"
+    if metadata_line is None:
+        metadata_line = f"Data Export metadata: Failed - {e}"
+        outcome_line = "Data Export API: Skipped - metadata check failed"
+    else:
+        outcome_line = f"Data Export API: Failed - {e}"
 ```
 
 Keep auth failures as:
@@ -944,12 +1004,40 @@ raise ToolError(
 )
 ```
 
+Build final output from the spend line, metadata line, outcome line, platforms
+line, and explanatory notes:
+
+```python
+platform_text = (
+    ", ".join(platforms)
+    if platforms
+    else f"none (no spend rows for {yesterday})"
+)
+lines = [
+    f"Status: {status}",
+    f"Environment: {config.environment}",
+    f"Spend API: OK - {record_count} spend rows for {yesterday}",
+    metadata_line or "Data Export metadata: Skipped",
+    outcome_line,
+    f"Platforms visible from spend: {platform_text}",
+    "Note: spend rows are ad spend records, not orders or transactions.",
+]
+if status == "Connected" and record_count == 0 and (
+    outcome["transactions"] > 0 or outcome["revenue"] > 0
+):
+    lines.append(
+        "Outcome data exists even though spend rows are zero; this usually means "
+        "the Spend API has no ad spend records for that date, not that orders are missing."
+    )
+return "\n".join(lines)
+```
+
 - [ ] **Step 4: Run setup sanity tests**
 
 Run:
 
 ```bash
-uv run pytest tests/test_tools.py::test_check_connection_success tests/test_tools.py::test_check_connection_reports_spend_and_outcome_surfaces tests/test_tools.py::test_check_connection_reports_partial_data_export_failure tests/test_tools.py::test_check_connection_auth_failure_raises_tool_error -v
+uv run pytest tests/test_tools.py::test_check_connection_success tests/test_tools.py::test_check_connection_reports_spend_and_outcome_surfaces tests/test_tools.py::test_check_connection_reports_partial_data_export_failure tests/test_tools.py::test_check_connection_reports_partial_metadata_failure tests/test_tools.py::test_check_connection_auth_failure_raises_tool_error -v
 ```
 
 Expected: PASS.
@@ -1230,7 +1318,8 @@ Expected: no stale Data Export request-body examples remain. Mentions of compati
 - [ ] **Step 6: Commit docs and skill updates**
 
 ```bash
-git add skills/setup/SKILL.md skills/analyze/SKILL.md docs/northbeam-data-export-api.md README.md
+git add skills/setup/SKILL.md skills/analyze/SKILL.md README.md
+git add -f docs/northbeam-data-export-api.md
 git commit -m "docs: update Northbeam setup and export API guidance"
 ```
 

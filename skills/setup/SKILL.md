@@ -23,12 +23,12 @@ Call the `northbeam_check_connection` tool.
    - Navigate to **Settings → API Keys**
    - Copy the **API Key** and **Client ID**
 
-2. Tell them to configure the plugin credentials in Codex if a credential prompt is available. If Codex does not show a plugin credential prompt, set these variables in the environment used to launch Codex:
+2. Tell them to configure the plugin credentials in the environment used to launch Codex, or in a `.env` file in the project directory where they start Codex:
    - `NORTHBEAM_API_KEY`
    - `NORTHBEAM_CLIENT_ID`
    - `NORTHBEAM_API_ENV=prod` or `NORTHBEAM_API_ENV=uat` (optional; defaults to `prod`)
 
-3. After they confirm the credentials are saved, tell them to restart Codex or start a new Codex thread for the changes to take effect, then re-run `/northbeam:setup`.
+3. After they confirm the credentials are saved, tell them to restart Codex or start a new Codex thread from that project directory for the changes to take effect, then re-run `/northbeam:setup`.
 
 ## Step 2: Validate Connection
 

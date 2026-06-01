@@ -107,7 +107,9 @@ async def test_check_connection_handles_empty_response(config):
     assert "0" in result
 
 
-async def test_list_spend_missing_config_raises_tool_error(monkeypatch):
+async def test_list_spend_missing_config_raises_tool_error(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PWD", str(tmp_path))
     monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
     monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)
 
@@ -150,7 +152,9 @@ async def test_list_options_unwraps_exception_group_auth_error(config):
             await _list_options(config=config)
 
 
-async def test_list_options_missing_config_raises_tool_error(monkeypatch):
+async def test_list_options_missing_config_raises_tool_error(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PWD", str(tmp_path))
     monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
     monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)
 

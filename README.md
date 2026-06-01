@@ -71,7 +71,19 @@ Use this path when developing or installing this checkout directly.
 
 ### Credentials
 
-The MCP server reads credentials from the Codex process environment:
+The MCP server needs a Northbeam API Key and Client ID. For normal Codex usage,
+put them in the environment used to launch Codex.
+
+Option 1: create a local `.env` file in the project directory where you start
+Codex:
+
+```bash
+cp .env.example .env
+# Edit .env with your real Northbeam values.
+codex
+```
+
+Option 2: export the variables before starting Codex:
 
 ```bash
 export NORTHBEAM_API_KEY="..."
@@ -80,9 +92,12 @@ export NORTHBEAM_API_ENV="prod"  # optional; use "uat" for UAT
 codex
 ```
 
-If you launch Codex from a desktop app or another process manager, configure
-these variables in the environment used to start Codex, then restart Codex or
-open a new thread.
+Existing environment variables take precedence over `.env` values. If you
+launch Codex from a desktop app or another process manager, configure these
+variables in that launch environment, then restart Codex or open a new thread.
+
+Do not commit real credentials. `.env` is ignored; `.env.example` is the safe
+template to commit.
 
 ### Verify Connection
 
@@ -184,8 +199,8 @@ These tools are available when the plugin is active:
 
 - Run `/northbeam:setup` to re-check your API key and client ID.
 - Verify the values in the Northbeam dashboard under **Settings > API Keys**.
-- For Codex, confirm the environment variables are available to the Codex
-  process, not only to an unrelated terminal session.
+- For Codex, confirm the variables are available to the Codex process. If you
+  use `.env`, start Codex from the same project directory as that `.env` file.
 - Start a new Codex thread after changing credentials.
 
 ### MCP Server Will Not Start

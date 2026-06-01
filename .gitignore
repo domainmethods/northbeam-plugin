@@ -2,6 +2,11 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+.env
+.env.*
+!.env.example
+.venv/
+.spec-workflow/
 *.egg-info/
 dist/
 build/

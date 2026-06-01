@@ -196,7 +196,9 @@ async def test_portfolio_health_graceful_export_failure(config, monkeypatch):
     assert "outcome_error" in result
 
 
-async def test_portfolio_health_missing_config(monkeypatch):
+async def test_portfolio_health_missing_config(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PWD", str(tmp_path))
     monkeypatch.delenv("NORTHBEAM_API_KEY", raising=False)
     monkeypatch.delenv("NORTHBEAM_CLIENT_ID", raising=False)
 

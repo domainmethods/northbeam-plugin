@@ -1,0 +1,35 @@
+{
+  "name": "northbeam",
+  "version": "1.0.0+codex.20260601031312",
+  "description": "Northbeam Spend Intelligence for marketing analytics, anomaly detection, and budget optimization.",
+  "author": {
+    "name": "WeightCare"
+  },
+  "license": "MIT",
+  "keywords": [
+    "northbeam",
+    "marketing-analytics",
+    "ad-spend",
+    "roas",
+    "budget-optimization"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Northbeam",
+    "shortDescription": "Analyze Northbeam spend, ROAS, CAC, revenue, and budget pacing.",
+    "longDescription": "Use Northbeam Spend Intelligence to query ad spend and outcome metrics, compare attribution models, detect anomalies, monitor portfolio health, and identify budget optimization opportunities.",
+    "developerName": "WeightCare",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "defaultPrompt": [
+      "Check Northbeam portfolio health.",
+      "Find ad spend anomalies this week.",
+      "Compare ROAS by channel last month."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

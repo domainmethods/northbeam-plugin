@@ -1,87 +1,232 @@
-# Northbeam Claude Code Plugin
+# Northbeam Plugin for Codex and Claude Code
 
-A Claude Code plugin for marketing analytics via the Northbeam API. Covers both spend data (impressions, clicks, CPC/CPM) and outcome metrics (revenue, ROAS, CAC, conversions) through the Spend and Data Export APIs.
+Marketing analytics through the Northbeam API. The plugin covers spend data
+(impressions, clicks, CPC, CPM, CTR) and outcome metrics (revenue, ROAS, CAC,
+conversions) through Northbeam's Spend and Data Export APIs.
 
 ## Prerequisites
 
-- [Claude Code](https://claude.ai/code) — CLI, Desktop (Mac/Windows), or VS Code extension (JetBrains and web app do not support plugins)
-- [uv](https://docs.astral.sh/uv/) — Python package manager (handles Python and dependencies automatically)
-- Northbeam account with API access (API Key + Client ID from **Settings > API Keys**)
+- Codex with plugin support, or Claude Code with plugin support
+- [uv](https://docs.astral.sh/uv/) for Python dependency management
+- Northbeam API access: API Key and Client ID from **Settings > API Keys**
 
-## Installation
+## Codex Installation
 
-### 1. Add the marketplace
+### Local Personal Marketplace
+
+Use this path when developing or installing this checkout directly.
+
+1. Make the plugin source available from your personal plugin directory:
+
+   ```bash
+   mkdir -p ~/plugins ~/.agents/plugins
+   ln -sfn "$(pwd)" ~/plugins/northbeam
+   ```
+
+2. Add the plugin to `~/.agents/plugins/marketplace.json`.
+
+   If that file already has plugins, add the `northbeam` object to the existing
+   `plugins` array instead of replacing the file.
+
+   ```json
+   {
+     "name": "personal",
+     "interface": {
+       "displayName": "Personal"
+     },
+     "plugins": [
+       {
+         "name": "northbeam",
+         "source": {
+           "source": "local",
+           "path": "./plugins/northbeam"
+         },
+         "policy": {
+           "installation": "AVAILABLE",
+           "authentication": "ON_INSTALL"
+         },
+         "category": "Productivity"
+       }
+     ]
+   }
+   ```
+
+   Codex discovers this personal marketplace automatically. You do not need to
+   run `codex plugin marketplace add` for this default personal-marketplace
+   location.
+
+3. Install or reinstall the plugin:
+
+   ```bash
+   codex plugin add northbeam@personal
+   ```
+
+4. Confirm it is installed and enabled:
+
+   ```bash
+   codex plugin list
+   ```
+
+5. Start a new Codex thread so Codex loads the plugin skills and MCP tools.
+
+### Credentials
+
+The MCP server reads credentials from the Codex process environment:
 
 ```bash
-/plugin marketplace add domainmethods/northbeam-plugin
+export NORTHBEAM_API_KEY="..."
+export NORTHBEAM_CLIENT_ID="..."
+export NORTHBEAM_API_ENV="prod"  # optional; use "uat" for UAT
+codex
 ```
 
-### 2. Install the plugin
-
-```bash
-/plugin install northbeam@domainmethods/northbeam-plugin
-```
-
-On first enable, Claude Code prompts for your credentials:
-
-- **NORTHBEAM_API_KEY** — your Northbeam API key
-- **NORTHBEAM_CLIENT_ID** — your Northbeam Client ID
-- **NORTHBEAM_API_ENV** — `prod` (default) or `uat`
-
-Sensitive values are stored in your system keychain. No manual `settings.json` edits needed.
+If you launch Codex from a desktop app or another process manager, configure
+these variables in the environment used to start Codex, then restart Codex or
+open a new thread.
 
 ### Verify Connection
 
-```
+In Codex, run:
+
+```text
 /northbeam:setup
 ```
 
-This validates your credentials and optionally sets up your business context profile (monthly budgets, KPI targets, campaign naming conventions).
+The setup skill validates your credentials and can create a business context
+profile at `~/.codex/northbeam-profile.json` for monthly budgets, KPI targets,
+ROAS goals, and campaign naming conventions.
+
+## Codex Usage
+
+After installation, use the Northbeam skills directly:
+
+```text
+/northbeam:setup
+/northbeam:analyze Check portfolio health for this month.
+/northbeam:analyze Which channels are over budget pace?
+/northbeam:analyze Compare ROAS by channel for last week vs the prior week.
+```
+
+You can also ask natural-language questions in a Codex thread after the plugin
+is loaded:
+
+```text
+Find spend anomalies this week.
+Show Facebook CPC and CPM for the last 14 days.
+Which campaigns should I watch for diminishing returns?
+Compare revenue and ROAS by channel for month to date.
+```
+
+## Claude Code Installation
+
+This repository also includes a Claude Code plugin manifest.
+
+1. Add the marketplace:
+
+   ```bash
+   /plugin marketplace add domainmethods/northbeam-plugin
+   ```
+
+2. Install the plugin:
+
+   ```bash
+   /plugin install northbeam@domainmethods/northbeam-plugin
+   ```
+
+3. Run setup:
+
+   ```text
+   /northbeam:setup
+   ```
+
+Claude Code prompts for the Northbeam credentials declared in
+`.claude-plugin/plugin.json` and stores sensitive values through its plugin
+credential flow.
 
 ## Skills
 
 ### `/northbeam:setup`
-Configure credentials and business context profile.
+
+Checks the Northbeam API connection and optionally writes a business context
+profile for budget pacing and target-vs-actual analysis.
 
 ### `/northbeam:analyze`
+
 Strategic marketing analysis. Capabilities include:
+
 - Ad hoc spend queries with derived metrics (CPC, CPM, CTR)
-- Outcome metrics via Data Export (revenue, ROAS, CAC, conversions)
-- Attribution model comparison (side-by-side across models)
-- Automatic period-over-period comparisons (WoW, MoM, YoY)
-- Anomaly detection (spend gaps, efficiency spikes, revenue drops)
-- Campaign naming intelligence (parse dimensions from naming conventions)
-- Diminishing returns detection (audience fatigue alerts)
-- Budget allocation modeling (efficiency + ROAS signals)
-- Portfolio health dashboard (spend + outcomes morning briefing)
+- Outcome metrics through Data Export (revenue, ROAS, CAC, conversions)
+- Attribution model comparison across models
+- Period-over-period comparisons (WoW, MoM, YoY)
+- Anomaly detection for spend gaps, efficiency spikes, and revenue drops
+- Campaign naming intelligence
+- Diminishing returns detection
+- Budget allocation modeling
+- Portfolio health dashboards
 - Year-over-year seasonality context
-- Industry benchmarking (DTC/ecommerce ranges)
+- DTC/ecommerce benchmark context
 
 ## MCP Tools
 
-These tools are available to Claude when the plugin is active:
+These tools are available when the plugin is active:
 
 | Tool | Description |
 |------|-------------|
-| `northbeam_list_spend` | Query spend records with filters (date, platform, campaign, ad) and pagination |
-| `northbeam_data_export` | Run async data exports for outcome metrics (revenue, ROAS, CAC, conversions) |
+| `northbeam_list_spend` | Query spend records with filters for date, platform, campaign, ad, and pagination |
+| `northbeam_data_export` | Run async data exports for outcome metrics such as revenue, ROAS, CAC, and conversions |
 | `northbeam_list_options` | Discover available breakdowns, metrics, and attribution models |
-| `northbeam_portfolio_health` | Holistic snapshot — spend efficiency + outcome metrics in one concurrent call |
+| `northbeam_portfolio_health` | Build a holistic spend-efficiency and outcome-metric snapshot in one concurrent call |
 | `northbeam_check_connection` | Validate credentials and report visible platforms |
 
 ## Troubleshooting
 
-### Credentials not working
-- Run `/northbeam:setup` to re-check your API key and client ID
-- Verify your credentials in the Northbeam dashboard under **Settings > API Keys**
+### Credentials Not Working
 
-### MCP server won't start
-- Confirm `uv` is installed: `uv --version`
-- Check for errors: run `claude --debug` and look for MCP initialization failures
+- Run `/northbeam:setup` to re-check your API key and client ID.
+- Verify the values in the Northbeam dashboard under **Settings > API Keys**.
+- For Codex, confirm the environment variables are available to the Codex
+  process, not only to an unrelated terminal session.
+- Start a new Codex thread after changing credentials.
 
-### Plugin not loading
-- Run `/plugins` to check plugin status and error messages
-- Try `/reload-plugins` to force a refresh
+### MCP Server Will Not Start
+
+- Confirm `uv` is installed:
+
+  ```bash
+  uv --version
+  ```
+
+- Confirm the server imports from this checkout:
+
+  ```bash
+  uv run python -c "import server.northbeam_mcp; print('ok')"
+  ```
+
+### Codex Plugin Not Loading
+
+- Check plugin status:
+
+  ```bash
+  codex plugin list
+  ```
+
+- Reinstall after changing `.codex-plugin/plugin.json`:
+
+  ```bash
+  codex plugin add northbeam@personal
+  ```
+
+- Start a new Codex thread after reinstalling.
+
+## Development Checks
+
+Run the plugin validator and tests before publishing or reinstalling a changed
+plugin:
+
+```bash
+python3 ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py .
+uv run pytest
+```
 
 ## License
 

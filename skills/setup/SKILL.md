@@ -3,7 +3,7 @@ name: setup
 description: Check Northbeam API credentials, configure connection, and set up business context profile. Use when first connecting to Northbeam or troubleshooting authentication issues.
 allowed-tools: mcp__northbeam__northbeam_check_connection, mcp__northbeam__northbeam_list_spend, Read, Write
 user-invocable: true
-disable-model-invocation: true
+disable-model-invocation: false
 ---
 
 # Northbeam Setup
@@ -23,10 +23,12 @@ Call the `northbeam_check_connection` tool.
    - Navigate to **Settings → API Keys**
    - Copy the **API Key** and **Client ID**
 
-2. Tell them to configure the plugin. The plugin's `userConfig` should have prompted for these values when the plugin was enabled (stored securely in the system keychain). If the credentials are missing or incorrect, they can re-configure by running:
-   - `/plugins` → select `northbeam` → reconfigure
+2. Tell them to configure the plugin credentials in Codex if a credential prompt is available. If Codex does not show a plugin credential prompt, set these variables in the environment used to launch Codex:
+   - `NORTHBEAM_API_KEY`
+   - `NORTHBEAM_CLIENT_ID`
+   - `NORTHBEAM_API_ENV=prod` or `NORTHBEAM_API_ENV=uat` (optional; defaults to `prod`)
 
-3. After they confirm the credentials are saved, tell them to restart Claude Code (or reload the plugin) for the changes to take effect, then re-run `/northbeam:setup`.
+3. After they confirm the credentials are saved, tell them to restart Codex or start a new Codex thread for the changes to take effect, then re-run `/northbeam:setup`.
 
 ## Step 2: Validate Connection
 
@@ -52,6 +54,6 @@ If they want to proceed, ask them one question at a time:
 4. **Campaign naming convention:** "Do your campaign names follow a pattern? For example: FB_Prospecting_LAL1_US_Q2_Video. If so, describe the segments." (offer to skip)
 5. **Currency:** "What currency are your budgets in?" (default USD)
 
-After collecting answers, write the profile to `~/.claude/northbeam-profile.json` using the Write tool. Confirm the file was saved.
+After collecting answers, write the profile to `~/.codex/northbeam-profile.json` using the Write tool. Confirm the file was saved.
 
 If they decline the profile, that's fine — the analyze skill works without it (just without budget pacing and target comparisons).

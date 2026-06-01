@@ -80,6 +80,35 @@ def _enrich_spend_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def _spend_rows_from_aggregated(
+    aggregated: list[dict[str, Any]],
+    breakdown_key: str = "platform",
+    campaign_key: str | None = None,
+) -> list[dict[str, Any]]:
+    """Convert aggregated Data Export rows into the legacy spend-row shape
+    (`platform_name`, optionally `campaign_name`, `spend`, `impressions`,
+    `clicks`) that the analyze capabilities consume. Impressions come from the
+    `imprs`-backed `impressions` metric; clicks are derived from `ecpc`
+    (clicks = spend / ecpc). When `campaign_key` is set (campaign-level exports),
+    each row also carries `campaign_name`."""
+    rows: list[dict[str, Any]] = []
+    for entry in aggregated:
+        spend = _safe_float(entry.get("spend"))
+        impressions = _safe_float(entry.get("impressions"))
+        ecpc = _safe_float(entry.get("ecpc"))
+        clicks = spend / ecpc if ecpc > 0 else 0.0
+        row = {
+            "platform_name": entry.get(breakdown_key) or "Unknown",
+            "spend": spend,
+            "impressions": impressions,
+            "clicks": clicks,
+        }
+        if campaign_key:
+            row["campaign_name"] = entry.get(campaign_key) or "Unknown"
+        rows.append(row)
+    return _enrich_spend_rows(rows)
+
+
 async def _list_spend(
     config: NorthbeamConfig | None = None,
     date: str | None = None,

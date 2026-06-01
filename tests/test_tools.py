@@ -7,6 +7,8 @@ from mcp.server.fastmcp.exceptions import ToolError
 from server.northbeam_mcp import (
     _list_spend, _check_connection, _list_options, _data_export,
     _aggregate_export_rows, _enrich_spend_rows, MAX_RESULT_ROWS,
+    _spend_rows_from_aggregated, _compute_blended_metrics,
+    _aggregate_spend_by_platform,
 )
 
 import server.client as client_module
@@ -940,3 +942,69 @@ def test_aggregate_export_rows_without_partition_column_is_unchanged():
 
     assert len(result) == 1
     assert result[0]["spend"] == 300.0
+
+
+def test_spend_rows_from_aggregated_derives_clicks_and_impressions():
+    aggregated = [
+        {"platform": "Facebook Ads", "spend": 407056.74,
+         "impressions": 10000000.0, "ecpc": 0.50},
+    ]
+
+    rows = _spend_rows_from_aggregated(aggregated)
+
+    assert rows[0]["platform_name"] == "Facebook Ads"
+    assert rows[0]["spend"] == 407056.74
+    assert rows[0]["impressions"] == 10000000.0
+    # clicks = spend / ecpc
+    assert rows[0]["clicks"] == 407056.74 / 0.50
+    # cpc enriched from spend / clicks == ecpc
+    assert rows[0]["cpc"] == round(0.50, 2)
+
+
+def test_spend_rows_from_aggregated_reconciles_may_2026_totals():
+    aggregated = [
+        {"platform": "Facebook Ads", "spend": 407056.74, "impressions": 1.0, "ecpc": 1.0},
+        {"platform": "TikTok", "spend": 70866.64, "impressions": 1.0, "ecpc": 1.0},
+        {"platform": "Google", "spend": 67753.45, "impressions": 1.0, "ecpc": 1.0},
+    ]
+
+    rows = _spend_rows_from_aggregated(aggregated)
+    blended = _compute_blended_metrics(rows)
+    by_platform = _aggregate_spend_by_platform(rows)
+
+    assert blended["total_spend"] == 545676.83
+    assert by_platform[0]["platform"] == "Facebook Ads"
+    assert by_platform[0]["spend"] == 407056.74
+
+
+def test_spend_rows_from_aggregated_zero_ecpc_yields_zero_clicks():
+    aggregated = [{"platform": "Email", "spend": 100.0, "impressions": 0.0, "ecpc": 0.0}]
+
+    rows = _spend_rows_from_aggregated(aggregated)
+
+    assert rows[0]["clicks"] == 0.0
+    assert rows[0]["cpc"] is None
+
+
+def test_spend_rows_from_aggregated_emits_campaign_name_when_keyed():
+    # Verified live: level=campaign exports carry a `campaign_name` column, and
+    # aggregating on ["platform", "campaign_name"] yields entries with both keys.
+    aggregated = [
+        {"platform": "Facebook Ads", "campaign_name": "PARTNERSHIPS-CBO",
+         "spend": 798.61, "impressions": 63490.0, "ecpc": 1.0676604278},
+    ]
+
+    rows = _spend_rows_from_aggregated(aggregated, campaign_key="campaign_name")
+
+    assert rows[0]["platform_name"] == "Facebook Ads"
+    assert rows[0]["campaign_name"] == "PARTNERSHIPS-CBO"
+    assert rows[0]["spend"] == 798.61
+    assert rows[0]["clicks"] == 798.61 / 1.0676604278
+
+
+def test_spend_rows_from_aggregated_omits_campaign_name_by_default():
+    aggregated = [{"platform": "Facebook Ads", "spend": 100.0, "impressions": 10.0, "ecpc": 1.0}]
+
+    rows = _spend_rows_from_aggregated(aggregated)
+
+    assert "campaign_name" not in rows[0]

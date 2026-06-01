@@ -370,6 +370,28 @@ async def test_poll_export_result_returns_on_completed(config):
     assert route.call_count == 3
 
 
+async def test_poll_export_result_returns_on_success(config, monkeypatch):
+    import server.client as client_module
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+
+    with respx.mock:
+        route = respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-success")
+        route.side_effect = [
+            httpx.Response(200, json={"status": "PENDING"}),
+            httpx.Response(200, json={
+                "status": "SUCCESS",
+                "result": ["https://storage.example.com/export.csv"],
+            }),
+        ]
+
+        async with NorthbeamClient(config) as client:
+            result = await client.poll_export_result("exp-success")
+
+    assert result["status"] == "SUCCESS"
+    assert result["result"] == ["https://storage.example.com/export.csv"]
+    assert route.call_count == 2
+
+
 async def test_poll_export_result_raises_on_failed(config):
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-fail").mock(

@@ -14,6 +14,8 @@ INITIAL_BACKOFF = 0.5
 EXPORT_POLL_INTERVAL = 2.0
 EXPORT_POLL_TIMEOUT = 60.0
 DOWNLOAD_TIMEOUT = 60.0
+EXPORT_SUCCESS_STATUSES = {"COMPLETED", "SUCCESS"}
+EXPORT_FAILURE_STATUSES = {"FAILED", "FAILURE"}
 
 
 class NorthbeamAuthError(Exception):
@@ -26,6 +28,10 @@ class NorthbeamValidationError(Exception):
 
 class NorthbeamAPIError(Exception):
     pass
+
+
+def _normalize_export_status(status: Any) -> str:
+    return str(status or "").strip().upper()
 
 
 class NorthbeamClient:
@@ -128,10 +134,10 @@ class NorthbeamClient:
                     result = await self._request_with_retry(
                         "GET", f"exports/data-export/result/{export_id}"
                     )
-                    status = result.get("status", "").upper()
-                    if status == "COMPLETED":
+                    status = _normalize_export_status(result.get("status"))
+                    if status in EXPORT_SUCCESS_STATUSES:
                         return result
-                    if status == "FAILED":
+                    if status in EXPORT_FAILURE_STATUSES:
                         raise NorthbeamAPIError(
                             f"Export {export_id} failed: "
                             f"{result.get('error', 'unknown')}"

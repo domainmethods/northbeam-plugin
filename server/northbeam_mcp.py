@@ -21,7 +21,7 @@ from server.data_export import (
     metric_column_candidates,
 )
 
-logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 logger = logging.getLogger("northbeam-mcp")
 
 mcp = FastMCP("northbeam")
@@ -32,6 +32,19 @@ AUTH_ERROR_MSG = (
 )
 
 MAX_RESULT_ROWS = 200
+ADDITIVE_EXPORT_METRICS = {
+    "clicks",
+    "conversion",
+    "conversions",
+    "cost",
+    "impressions",
+    "orders",
+    "revenue",
+    "rev",
+    "spend",
+    "transactions",
+    "txns",
+}
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -39,6 +52,10 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (ValueError, TypeError):
         return default
+
+
+def _is_additive_export_metric(metric: str) -> bool:
+    return metric.lower() in ADDITIVE_EXPORT_METRICS
 
 
 def _first_row_value(row: dict[str, Any], candidates: list[str], default: Any = "") -> Any:
@@ -160,6 +177,28 @@ def _format_exception_message(error: BaseException) -> str:
     return str(error)
 
 
+def _data_export_failure_message(error: BaseException) -> str:
+    message = _format_exception_message(error)
+    if isinstance(error, (NorthbeamAuthError, NorthbeamConfigError)):
+        return f"authentication/configuration failed: {message}"
+    if isinstance(error, ExceptionGroup) and _exception_group_contains_auth_error(error):
+        return f"authentication/configuration failed: {message}"
+    return message
+
+
+def _set_data_export_failure_lines(
+    metadata_line: str | None,
+    error: BaseException,
+) -> tuple[str, str]:
+    message = _data_export_failure_message(error)
+    if metadata_line is None:
+        return (
+            f"Data Export metadata: Failed - {message}",
+            "Data Export API: Skipped - metadata check failed",
+        )
+    return metadata_line, f"Data Export API: Failed - {message}"
+
+
 async def _check_connection(
     config: NorthbeamConfig | None = None,
     check_date: str | None = None,
@@ -184,26 +223,21 @@ async def _check_connection(
                     f"transactions={outcome['transactions']:.2f}, "
                     f"revenue={outcome['revenue']:.2f} for {yesterday}"
                 )
-            except (NorthbeamAuthError, NorthbeamConfigError):
-                raise
+            except (NorthbeamAuthError, NorthbeamConfigError) as e:
+                status = "Partially connected"
+                metadata_line, outcome_line = _set_data_export_failure_lines(
+                    metadata_line, e
+                )
             except ExceptionGroup as eg:
-                if _exception_group_contains_auth_error(eg):
-                    raise NorthbeamAuthError(str(eg)) from eg
-                message = _format_exception_message(eg)
                 status = "Partially connected"
-                if metadata_line is None:
-                    metadata_line = f"Data Export metadata: Failed - {message}"
-                    outcome_line = "Data Export API: Skipped - metadata check failed"
-                else:
-                    outcome_line = f"Data Export API: Failed - {message}"
+                metadata_line, outcome_line = _set_data_export_failure_lines(
+                    metadata_line, eg
+                )
             except Exception as e:
-                message = _format_exception_message(e)
                 status = "Partially connected"
-                if metadata_line is None:
-                    metadata_line = f"Data Export metadata: Failed - {message}"
-                    outcome_line = "Data Export API: Skipped - metadata check failed"
-                else:
-                    outcome_line = f"Data Export API: Failed - {message}"
+                metadata_line, outcome_line = _set_data_export_failure_lines(
+                    metadata_line, e
+                )
 
         platforms = sorted(set(
             r.get("platform_name") for r in (result.get("data") or [])
@@ -225,6 +259,11 @@ async def _check_connection(
             f"Platforms visible from spend: {platform_text}",
             "Note: spend rows are ad spend records, not orders or transactions.",
         ]
+        if status == "Partially connected":
+            lines.append(
+                "Note: Spend API credentials worked, but outcome metrics may be "
+                "unavailable until Data Export is fixed."
+            )
         if status == "Connected" and record_count == 0 and (
             outcome["transactions"] > 0 or outcome["revenue"] > 0
         ):
@@ -311,7 +350,7 @@ def _aggregate_export_rows(
     breakdowns: list[str],
     metrics: list[str],
 ) -> list[dict[str, Any]]:
-    """Aggregate raw CSV rows by breakdown keys, summing metric values."""
+    """Aggregate raw CSV rows by breakdown keys."""
     groups: dict[tuple, dict[str, Any]] = defaultdict(
         lambda: {"_count": 0}
     )
@@ -325,17 +364,29 @@ def _aggregate_export_rows(
         group["_count"] += 1
         for m in metrics:
             metric_value = _first_row_value(row, metric_column_candidates(m), default=0)
-            group[m] = group.get(m, 0.0) + _safe_float(metric_value)
+            value = _safe_float(metric_value)
+            if _is_additive_export_metric(m):
+                group[m] = group.get(m, 0.0) + value
+            else:
+                metric_values = group.setdefault("_metric_values", {})
+                metric_values.setdefault(m, []).append(value)
 
     aggregated: list[dict[str, Any]] = []
     for key, group in groups.items():
         entry: dict[str, Any] = dict(zip(breakdowns, key))
         for m in metrics:
-            entry[m] = round(group.get(m, 0.0), 2)
+            if _is_additive_export_metric(m):
+                entry[m] = round(group.get(m, 0.0), 2)
+                continue
+            values = group.get("_metric_values", {}).get(m, [])
+            entry[m] = round(values[0], 2) if len(values) == 1 else None
         entry["_row_count"] = group["_count"]
         aggregated.append(entry)
 
-    aggregated.sort(key=lambda r: r.get(metrics[0], 0) if metrics else 0, reverse=True)
+    aggregated.sort(
+        key=lambda r: _safe_float(r.get(metrics[0])) if metrics else 0,
+        reverse=True,
+    )
     return aggregated
 
 
@@ -429,6 +480,10 @@ async def _data_export(
                 "attribution_window": attribution_window,
                 "breakdowns": effective_breakdowns,
                 "metrics": effective_metrics,
+                "non_additive_metrics": [
+                    metric for metric in effective_metrics
+                    if not _is_additive_export_metric(metric)
+                ],
             },
             "data": data,
         }
@@ -476,8 +531,9 @@ async def northbeam_data_export(
 
     Use northbeam_list_options to discover valid metric/breakdown/model values.
 
-    Returns aggregated data grouped by the requested breakdowns with summed
-    metrics. Results capped at 200 rows (sorted by first metric descending).
+    Returns aggregated data grouped by the requested breakdowns. Additive
+    metrics are summed; ratio metrics are left null when a group spans multiple
+    raw rows. Results capped at 200 rows (sorted by first metric descending).
     Check summary.truncated — if true, suggest narrower breakdowns.
     """
     return await _data_export(

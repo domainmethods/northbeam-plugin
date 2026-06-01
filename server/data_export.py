@@ -42,6 +42,8 @@ def build_breakdown_value_lookup(options: dict[str, Any]) -> dict[str, list[str]
     raw_breakdowns = options.get("breakdowns", options)
     if isinstance(raw_breakdowns, dict):
         items = raw_breakdowns.get("breakdowns") or raw_breakdowns.get("data") or []
+    elif isinstance(raw_breakdowns, list):
+        items = raw_breakdowns
     else:
         items = []
 

@@ -549,6 +549,25 @@ async def test_download_export_csv_does_not_send_auth_headers(config):
     assert "data-client-id" not in sent_headers
 
 
+async def test_download_export_csv_sanitizes_signed_url_errors(config):
+    signed_url = "https://storage.example.com/export.csv?Signature=secret-token"
+
+    with respx.mock:
+        respx.get(signed_url).mock(
+            return_value=httpx.Response(403, text="expired")
+        )
+
+        async with NorthbeamClient(config) as client:
+            with pytest.raises(NorthbeamAPIError) as exc_info:
+                await client.download_export_csv(signed_url)
+
+    message = str(exc_info.value)
+    assert "HTTP 403" in message
+    assert "secret-token" not in message
+    assert "Signature" not in message
+    assert "storage.example.com" not in message
+
+
 async def test_download_export_csv_handles_quoted_newlines(config):
     csv_content = 'platform,campaign_name,revenue\nFacebook,"Spring\nPromo",1500\nTikTok,Summer,800\n'
 

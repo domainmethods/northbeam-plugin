@@ -285,6 +285,8 @@ helpers where tests can assert exact values.
 - Use export ID and download URL extraction helpers from `server/data_export.py`.
 - Update `_data_export` to use current payload shape.
 - Update `_run_export_pipeline` to use the same builder and response extraction.
+- Aggregate additive metrics only; ratio metrics such as `roas` and `cac` must
+  not be summed across multiple raw export rows.
 - Update `_portfolio_health` to request `rev` and `roas` with the current
   export contract and current breakdown key.
 - Expand `_check_connection` into the full-surface sanity flow.
@@ -295,6 +297,8 @@ helpers where tests can assert exact values.
 - Extract status normalization into a tiny private helper for unit tests.
 - Keep `download_export_csv` credential-safe by using a standalone HTTP client
   without Northbeam auth headers.
+- Sanitize download failures so pre-signed storage URLs are not surfaced in tool
+  output.
 
 ### `server/data_export.py`
 

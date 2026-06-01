@@ -241,7 +241,7 @@ These tools are available when the plugin is active:
 | `northbeam_data_export` | Run async data exports for outcome metrics such as revenue, ROAS, CAC, and conversions |
 | `northbeam_list_options` | Discover available breakdowns, metrics, and attribution models |
 | `northbeam_portfolio_health` | Build a holistic spend-efficiency and outcome-metric snapshot in one concurrent call |
-| `northbeam_check_connection` | Validate credentials and report visible platforms |
+| `northbeam_check_connection` | Validate Spend API access, Data Export metadata, and a tiny transactions/revenue export |
 
 ## Troubleshooting
 

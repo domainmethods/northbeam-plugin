@@ -151,9 +151,18 @@ class NorthbeamClient:
     async def download_export_csv(
         self, download_url: str
     ) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as http:
-            response = await http.get(download_url)
-            response.raise_for_status()
+        try:
+            async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as http:
+                response = await http.get(download_url)
+                response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise NorthbeamAPIError(
+                f"Export CSV download failed with HTTP {e.response.status_code}"
+            ) from None
+        except httpx.RequestError as e:
+            raise NorthbeamAPIError(
+                f"Export CSV download failed: {e.__class__.__name__}"
+            ) from None
 
         reader = csv.DictReader(io.StringIO(response.text))
         columns = list(reader.fieldnames or [])

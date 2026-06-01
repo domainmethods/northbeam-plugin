@@ -71,6 +71,14 @@ Same as Spend API — `Authorization` header (API key) + `Data-Client-ID` header
 The result URL is pre-signed and returns CSV data with breakdown columns plus
 metric columns. The URL does not require authentication headers.
 
+## Aggregation Behavior
+
+`northbeam_data_export` sums additive metrics such as `rev`, `txns`, and
+`conversions` when multiple CSV rows share the same requested breakdown keys.
+Known ratio/efficiency metrics such as `roas` and `cac` are not summed. They are
+returned only for single-row groups; multi-row groups return `null` for those
+metrics rather than reporting an invalid total.
+
 Compatibility note: the plugin also accepts older internal test fixtures that
 use `export_id`, `COMPLETED`, and `download_url`, but new requests are sent
 using the current Data Export API shape above.

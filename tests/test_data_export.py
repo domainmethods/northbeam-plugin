@@ -81,6 +81,16 @@ def test_build_breakdown_value_lookup_handles_current_metadata_shape():
     }
 
 
+def test_build_breakdown_value_lookup_handles_direct_list_shape():
+    lookup = build_breakdown_value_lookup({
+        "breakdowns": [
+            {"key": "Platform (Northbeam)", "values": ["Facebook Ads"]},
+        ]
+    })
+
+    assert lookup == {"Platform (Northbeam)": ["Facebook Ads"]}
+
+
 def test_extract_export_id_accepts_current_and_legacy_shapes():
     assert extract_export_id({"id": "new-id"}) == "new-id"
     assert extract_export_id({"export_id": "old-id"}) == "old-id"

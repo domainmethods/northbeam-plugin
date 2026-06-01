@@ -430,6 +430,11 @@ git commit -m "fix: support current Northbeam export polling status"
 - Modify: `tests/test_tools.py`
 - Modify: `tests/conftest.py`
 
+Implementation note: aggregate additive metrics such as `rev`, `txns`, and
+`conversions` by summing them. Do not sum ratio metrics such as `roas` or `cac`;
+multi-row groups should report those metrics as unavailable/null unless the code
+has additive inputs to recompute the ratio.
+
 - [ ] **Step 1: Update shared export fixtures**
 
 Modify `tests/conftest.py`:
@@ -1167,6 +1172,10 @@ export_task = asyncio.create_task(
     )
 )
 ```
+
+If the export returns multiple raw rows for the same platform, `rev` remains
+additive but `roas` must not be summed. Preserve `null` ROAS for those groups
+unless additive inputs are available to calculate a weighted ratio.
 
 - [ ] **Step 4: Run portfolio tests**
 

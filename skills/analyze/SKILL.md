@@ -79,6 +79,11 @@ Order and transaction questions route to `northbeam_data_export`, not
 `northbeam_list_spend`. Spend rows are ad spend records and should not be used
 as a proxy for orders.
 
+When `northbeam_data_export` aggregates multiple raw rows, additive metrics such
+as `rev` and `txns` are summed. Ratio metrics such as `roas` and `cac` may be
+`null` for multi-row groups; do not add or average them manually unless you have
+the additive inputs needed to compute the ratio.
+
 If the user asks about attribution model differences, use the Attribution Model Comparison capability below.
 
 ---
@@ -369,8 +374,8 @@ For MoM comparison, call it again with the prior month's date range.
 - Flag any platform more than 20% above or below blended average
 
 **2b. Outcome Metrics**
-- Blended ROAS across all channels (from `outcomes` array)
-- Per-platform ROAS with MoM delta
+- Blended ROAS across all channels only when the returned outcome rows include valid ROAS values or enough additive inputs to compute it
+- Per-platform ROAS with MoM delta, skipping `null` ratio values instead of treating them as zero
 - Flag any platform with ROAS below profile `roas_goal` target
 - If `outcome_error` is present, note that outcome data was unavailable and fall back to spend-only analysis
 

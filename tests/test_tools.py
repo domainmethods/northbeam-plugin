@@ -289,6 +289,39 @@ async def test_check_connection_reports_partial_metadata_failure(config):
     assert "Data Export metadata: Failed" in result
     assert "metadata unavailable" in result
     assert "Data Export API: Skipped - metadata check failed" in result
+    assert "Spend API credentials worked" in result
+
+
+async def test_check_connection_reports_partial_metadata_auth_failure(config):
+    spend_response = {
+        "data": [],
+        "page": 1,
+        "page_size": 1000,
+        "total_pages": 1,
+        "total_count": 0,
+    }
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, json=spend_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/breakdowns").mock(
+            return_value=httpx.Response(401, json={"message": "Data Export denied"})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/metrics").mock(
+            return_value=httpx.Response(200, json={"metrics": []})
+        )
+        respx.get("https://api.northbeam.io/v1/exports/attribution-models").mock(
+            return_value=httpx.Response(200, json={"attribution_models": []})
+        )
+
+        result = await _check_connection(config=config, check_date="2026-05-31")
+
+    assert "Status: Partially connected" in result
+    assert "Spend API: OK" in result
+    assert "Data Export metadata: Failed - authentication/configuration failed" in result
+    assert "Data Export API: Skipped - metadata check failed" in result
+    assert "Status: Not connected" not in result
 
 
 async def test_check_connection_reports_partial_poll_failure(
@@ -364,7 +397,8 @@ async def test_check_connection_reports_partial_download_failure(
     assert "Spend API: OK" in result
     assert "Data Export metadata: OK" in result
     assert "Data Export API: Failed" in result
-    assert "503 Service Unavailable" in result
+    assert "Export CSV download failed with HTTP 503" in result
+    assert "storage.example.com" not in result
 
 
 async def test_list_spend_missing_config_raises_tool_error(monkeypatch, tmp_path):
@@ -686,7 +720,7 @@ async def test_list_spend_platform_name_none_returns_all(config, sample_spend_re
     assert len(result["data"]) == 1
 
 
-def test_aggregate_export_rows_sums_metrics():
+def test_aggregate_export_rows_sums_additive_metrics_only():
     rows = [
         {"platform": "Facebook", "revenue": "1000", "roas": "3.0"},
         {"platform": "Facebook", "revenue": "500", "roas": "2.0"},
@@ -699,9 +733,10 @@ def test_aggregate_export_rows_sums_metrics():
     fb = next(r for r in result if r["platform"] == "Facebook")
     tt = next(r for r in result if r["platform"] == "TikTok")
     assert fb["revenue"] == 1500.0
-    assert fb["roas"] == 5.0
+    assert fb["roas"] is None
     assert fb["_row_count"] == 2
     assert tt["revenue"] == 800.0
+    assert tt["roas"] == 4.0
     assert tt["_row_count"] == 1
 
 
@@ -871,5 +906,6 @@ async def test_data_export_empty_breakdowns_aggregates_totals(
 
     assert len(result["data"]) == 1
     assert result["data"][0]["revenue"] == 1500.0
-    assert result["data"][0]["roas"] == 5.0
+    assert result["data"][0]["roas"] is None
     assert result["data"][0]["_row_count"] == 2
+    assert result["summary"]["non_additive_metrics"] == ["roas"]

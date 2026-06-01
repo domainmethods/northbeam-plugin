@@ -606,29 +606,54 @@ async def _portfolio_health(
             date_start = date_start or today.replace(day=1).isoformat()
 
         async with NorthbeamClient(config) as client:
-            spend_task = asyncio.create_task(
-                client.list_spend(
+            export_result: list[dict[str, Any]] | BaseException | None = None
+            try:
+                export_body = await _build_export_body(
+                    client,
                     date_start=date_start,
                     date_end=date_end,
-                    fetch_all=True,
+                    metrics=["rev", "roas"],
+                    breakdowns=["platform"],
+                    attribution_model=attribution_model,
+                    attribution_window=attribution_window,
                 )
-            )
+            except (NorthbeamAuthError, NorthbeamConfigError):
+                raise
+            except ExceptionGroup as eg:
+                if _exception_group_contains_auth_error(eg):
+                    raise NorthbeamAuthError(str(eg)) from eg
+                export_result = RuntimeError(_format_exception_message(eg))
+            except Exception as e:
+                export_result = e
 
-            export_body = {
-                "date_start": date_start,
-                "date_end": date_end,
-                "attribution_model": attribution_model,
-                "attribution_window": attribution_window,
-                "breakdowns": ["platform"],
-                "metrics": ["revenue", "roas"],
-            }
-            export_task = asyncio.create_task(
-                _run_export_pipeline(client, export_body)
-            )
-
-            spend_result, export_result = await asyncio.gather(
-                spend_task, export_task, return_exceptions=True
-            )
+            if export_result is None:
+                spend_task = asyncio.create_task(
+                    client.list_spend(
+                        date_start=date_start,
+                        date_end=date_end,
+                        fetch_all=True,
+                    )
+                )
+                export_task = asyncio.create_task(
+                    _run_export_pipeline(
+                        client,
+                        export_body,
+                        breakdowns=["platform"],
+                        metrics=["rev", "roas"],
+                    )
+                )
+                spend_result, export_result = await asyncio.gather(
+                    spend_task, export_task, return_exceptions=True
+                )
+            else:
+                try:
+                    spend_result = await client.list_spend(
+                        date_start=date_start,
+                        date_end=date_end,
+                        fetch_all=True,
+                    )
+                except Exception as e:
+                    spend_result = e
 
         if isinstance(spend_result, Exception):
             if isinstance(spend_result, (NorthbeamAuthError, NorthbeamConfigError)):
@@ -667,6 +692,11 @@ async def _portfolio_health(
         raise ToolError(AUTH_ERROR_MSG) from None
     except ToolError:
         raise
+    except ExceptionGroup as eg:
+        if _exception_group_contains_auth_error(eg):
+            raise ToolError(AUTH_ERROR_MSG) from None
+        logger.error("portfolio_health error: %s", eg)
+        raise ToolError(f"Error building portfolio health: {_format_exception_message(eg)}")
     except Exception as e:
         logger.error("portfolio_health error: %s", e)
         raise ToolError(f"Error building portfolio health: {e}")

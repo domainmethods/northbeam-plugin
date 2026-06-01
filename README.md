@@ -183,6 +183,10 @@ The setup skill validates your credentials and can create a business context
 profile at `~/.northbeam/profile.json` for monthly budgets, KPI targets,
 ROAS goals, and campaign naming conventions.
 
+The setup check validates both the Spend API and Data Export API. A zero spend
+row count means Northbeam returned no ad spend records for the checked day; it
+does not mean orders or transactions are missing.
+
 ## Codex Usage
 
 After installation, use the Northbeam skills directly:

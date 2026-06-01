@@ -14,7 +14,21 @@ You are helping the user configure their Northbeam API connection and business c
 
 Call the `northbeam_check_connection` tool.
 
-**If connected:** Report the environment and visible platforms. Skip to Step 3 (business context profile).
+**If connected:** Report the environment and summarize each checked surface:
+
+- Spend API status and spend row count for yesterday
+- Data Export metadata status
+- Data Export API status with transactions and revenue for yesterday
+
+Make clear that spend rows are ad spend records, not orders. If spend rows are
+0 but Data Export returns transactions or revenue, explain that this means
+outcome data exists even though no ad spend rows were returned for that date.
+Skip to Step 3 (business context profile).
+
+**If partially connected:** Explain which surface failed. If Spend API works
+but Data Export fails, do not tell the user to re-enter credentials unless the
+error is authentication-related; this usually means the plugin or API contract
+needs attention.
 
 **If not connected (authentication failed or env vars missing):** Guide the user through configuration:
 
@@ -47,8 +61,18 @@ Call the `northbeam_check_connection` tool.
 
 Once credentials are set, call `northbeam_check_connection` again. Confirm:
 - The environment shown (prod or uat)
-- The platforms visible
-- The record count
+- Spend API status and spend row count
+- Data Export metadata status
+- Data Export API transactions and revenue status
+
+Make clear that spend rows are ad spend records, not orders. If spend rows are
+0 but Data Export returns transactions or revenue, explain that this means
+outcome data exists even though no ad spend rows were returned for that date.
+
+If the check is partially connected, explain which surface failed. If Spend API
+works but Data Export fails, do not tell the user to re-enter credentials unless
+the error is authentication-related; this usually means the plugin or API
+contract needs attention.
 
 If the check succeeds, congratulate them and proceed to Step 3.
 

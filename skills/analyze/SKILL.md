@@ -66,8 +66,18 @@ When the user asks for metrics or breakdowns you haven't seen before:
 ### Data Export Defaults
 
 Unless the user specifies otherwise, use these defaults for `northbeam_data_export`:
-- `attribution_model`: `"northbeam_custom__va"` (Northbeam Custom VA)
-- `attribution_window`: `"7"` (7-day window)
+- Northbeam Custom VA attribution
+- 7-day attribution window
+
+Common outcome metric IDs:
+- `rev` - revenue
+- `txns` - transactions/orders
+- `roas` - return on ad spend
+- `cac` - customer acquisition cost
+
+Order and transaction questions route to `northbeam_data_export`, not
+`northbeam_list_spend`. Spend rows are ad spend records and should not be used
+as a proxy for orders.
 
 If the user asks about attribution model differences, use the Attribution Model Comparison capability below.
 

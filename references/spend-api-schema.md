@@ -2,10 +2,15 @@
 
 ## Endpoint
 
-`GET /v1/spend` — List spend records
+`GET /v1/spend` — List **uploaded** spend records (upload API for non-integrated channels)
 
 **Prod:** `https://api.northbeam.io/v1/spend`
 **UAT:** `https://api-uat.northbeam.io/v1/spend`
+
+> **Scope:** This endpoint returns only spend a customer *uploaded* for
+> non-integrated channels. It returns no rows for natively-integrated platforms
+> (Facebook/Google/TikTok) — for those, real spend and efficiency come from the
+> Data Export API (`spend`, `imprs`, `ecpc`). See `docs/northbeam-data-export-api.md`.
 
 ## Authentication
 

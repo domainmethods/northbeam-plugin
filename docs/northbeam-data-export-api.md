@@ -41,13 +41,13 @@ Same as Spend API — `Authorization` header (API key) + `Data-Client-ID` header
     "include_kind_and_platform": false
   },
   "attribution_options": {
-    "attribution_models": ["northbeam_custom__va"],
+    "attribution_models": ["northbeam_custom"],
     "accounting_modes": ["accrual"],
-    "attribution_windows": ["7"]
+    "attribution_windows": ["1"]
   },
   "metrics": [
     {"id": "txns"},
-    {"id": "rev"}
+    {"id": "revAttributed"}
   ]
 }
 ```
@@ -73,11 +73,22 @@ metric columns. The URL does not require authentication headers.
 
 ## Aggregation Behavior
 
-`northbeam_data_export` sums additive metrics such as `rev`, `txns`, and
-`conversions` when multiple CSV rows share the same requested breakdown keys.
-Known ratio/efficiency metrics such as `roas` and `cac` are not summed. They are
-returned only for single-row groups; multi-row groups return `null` for those
-metrics rather than reporting an invalid total.
+`northbeam_data_export` sums additive metrics such as `revAttributed`, `txns`,
+`spend`, and `impressions` (CSV column `imprs`) when multiple CSV rows share the
+same requested breakdown keys. Ratio metrics such as `roas`, `cac`, and `ecpc`
+are not summed — they are returned only for single-row groups; multi-row groups
+return `null`.
+
+**Revenue metric:** Use `revAttributed` (the UI "Revenue"/ROAS basis — windowed,
+model-dependent, accrual). `rev` is a cash/total-basis number that reads empty in
+the accrual windowed view; do not use it for UI parity.
+
+**Accounting-mode fan-out:** When a revenue metric is requested, the API returns
+one row per accounting mode — an "Accrual performance" row at the requested
+window plus a "Cash snapshot" row at lifetime — with spend repeated on each. The
+plugin filters to the requested accounting mode (default `accrual`) before
+aggregating so spend/revenue are not double-counted. Attribution windows apply
+only to accrual mode; cash mode is always lifetime.
 
 Compatibility note: the plugin also accepts older internal test fixtures that
 use `export_id`, `COMPLETED`, and `download_url`, but new requests are sent

@@ -17,6 +17,7 @@ BREAKDOWN_COLUMN_ALIASES = {
 
 METRIC_COLUMN_ALIASES = {
     "txns": ["transactions"],
+    "impressions": ["imprs"],
 }
 
 DEFAULT_EXPORT_OPTIONS = {
@@ -64,8 +65,8 @@ def build_data_export_payload(
     date_end: str,
     metrics: list[str],
     breakdowns: list[str],
-    attribution_model: str = "northbeam_custom__va",
-    attribution_window: str = "7",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
     breakdown_values: dict[str, list[str]] | None = None,
     level: str = "platform",
     time_granularity: str = "DAILY",

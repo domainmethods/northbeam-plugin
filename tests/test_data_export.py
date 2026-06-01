@@ -118,3 +118,22 @@ def test_metric_and_breakdown_column_candidates_cover_live_csv_names():
         "Platform (Northbeam)",
         "breakdown_platform_northbeam",
     ]
+
+
+def test_build_data_export_payload_uses_ui_defaults():
+    payload = build_data_export_payload(
+        date_start="2026-05-31",
+        date_end="2026-05-31",
+        metrics=["revAttributed"],
+        breakdowns=[],
+    )
+
+    assert payload["attribution_options"] == {
+        "attribution_models": ["northbeam_custom"],
+        "accounting_modes": ["accrual"],
+        "attribution_windows": ["1"],
+    }
+
+
+def test_metric_column_candidates_maps_impressions_to_imprs():
+    assert metric_column_candidates("impressions") == ["impressions", "imprs"]

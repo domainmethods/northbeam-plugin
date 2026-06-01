@@ -19,6 +19,7 @@ from server.data_export import (
     extract_download_url,
     extract_export_id,
     metric_column_candidates,
+    partition_column_candidates,
 )
 
 logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
@@ -41,6 +42,7 @@ ADDITIVE_EXPORT_METRICS = {
     "orders",
     "revenue",
     "rev",
+    "revattributed",
     "spend",
     "transactions",
     "txns",
@@ -345,12 +347,44 @@ async def _list_options(config: NorthbeamConfig | None = None) -> dict[str, Any]
         raise ToolError(f"Error fetching export options: {e}")
 
 
+def _select_accounting_partition(
+    rows: list[dict[str, str]],
+    accounting_mode: str | None,
+) -> list[dict[str, str]]:
+    """Drop fan-out duplicates. When a revenue metric is requested the API
+    returns one row per accounting mode (accrual + cash); spend is repeated on
+    each, so summing doubles it. When the CSV carries an accounting-mode column,
+    keep only rows matching the requested mode."""
+    if not accounting_mode or not rows:
+        return rows
+    candidates = partition_column_candidates("accounting_mode")
+    column = next((c for c in candidates if c in rows[0]), None)
+    if column is None:
+        return rows
+    needle = accounting_mode.strip().lower()
+    filtered = [
+        row for row in rows
+        if str(row.get(column, "")).strip().lower().startswith(needle)
+    ]
+    if not filtered:
+        logger.warning(
+            "accounting-mode column %r present but no rows matched %r; "
+            "keeping all rows (verify the partition column name)",
+            column, accounting_mode,
+        )
+        return rows
+    return filtered
+
+
 def _aggregate_export_rows(
     rows: list[dict[str, str]],
     breakdowns: list[str],
     metrics: list[str],
+    accounting_mode: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Aggregate raw CSV rows by breakdown keys."""
+    """Aggregate raw CSV rows by breakdown keys, after dropping fan-out
+    duplicate accounting-mode rows."""
+    rows = _select_accounting_partition(rows, accounting_mode)
     groups: dict[tuple, dict[str, Any]] = defaultdict(
         lambda: {"_count": 0}
     )
@@ -461,8 +495,13 @@ async def _data_export(
             raw_rows = csv_result["data"]
             total_rows = csv_result["total_rows"]
 
+        accounting_modes = (
+            body.get("attribution_options", {}).get("accounting_modes") or []
+        )
+        accounting_mode = accounting_modes[0] if accounting_modes else None
         aggregated = _aggregate_export_rows(
-            raw_rows, effective_breakdowns, effective_metrics
+            raw_rows, effective_breakdowns, effective_metrics,
+            accounting_mode=accounting_mode,
         ) if raw_rows else []
 
         total_groups = len(aggregated)
@@ -637,10 +676,15 @@ async def _run_export_pipeline(
                 for metric in raw_metrics
             ]
 
+        accounting_modes = (
+            body.get("attribution_options", {}).get("accounting_modes") or []
+        )
+        accounting_mode = accounting_modes[0] if accounting_modes else None
         return _aggregate_export_rows(
             raw_rows,
             effective_breakdowns,
             effective_metrics,
+            accounting_mode=accounting_mode,
         )
     return []
 

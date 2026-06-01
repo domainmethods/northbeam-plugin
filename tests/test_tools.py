@@ -909,3 +909,34 @@ async def test_data_export_empty_breakdowns_aggregates_totals(
     assert result["data"][0]["roas"] is None
     assert result["data"][0]["_row_count"] == 2
     assert result["summary"]["non_additive_metrics"] == ["roas"]
+
+
+def test_aggregate_export_rows_drops_fanout_accounting_modes():
+    rows = [
+        {"breakdown_platform_northbeam": "Facebook Ads", "spend": "407056.74",
+         "revAttributed": "89097.31", "accounting_mode": "Accrual performance"},
+        {"breakdown_platform_northbeam": "Facebook Ads", "spend": "407056.74",
+         "revAttributed": "154000.00", "accounting_mode": "Cash snapshot"},
+    ]
+
+    result = _aggregate_export_rows(
+        rows, ["platform"], ["spend", "revAttributed"], accounting_mode="accrual"
+    )
+
+    assert len(result) == 1
+    assert result[0]["spend"] == 407056.74
+    assert result[0]["revAttributed"] == 89097.31
+
+
+def test_aggregate_export_rows_without_partition_column_is_unchanged():
+    rows = [
+        {"breakdown_platform_northbeam": "Facebook Ads", "spend": "100"},
+        {"breakdown_platform_northbeam": "Facebook Ads", "spend": "200"},
+    ]
+
+    result = _aggregate_export_rows(
+        rows, ["platform"], ["spend"], accounting_mode="accrual"
+    )
+
+    assert len(result) == 1
+    assert result[0]["spend"] == 300.0

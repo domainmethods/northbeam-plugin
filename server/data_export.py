@@ -18,6 +18,11 @@ BREAKDOWN_COLUMN_ALIASES = {
 METRIC_COLUMN_ALIASES = {
     "txns": ["transactions"],
     "impressions": ["imprs"],
+    # The export returns attributed revenue in a column named `attributed_rev`
+    # even though the requested metric id is `revAttributed` (same metric-id vs
+    # CSV-column mismatch as imprs/impressions). Live-confirmed against a
+    # platform-level export (see the live-verification task in the plan).
+    "revAttributed": ["attributed_rev"],
 }
 
 # The Data Export API returns one row per accounting mode when a revenue metric

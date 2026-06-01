@@ -1056,6 +1056,50 @@ async def test_spend_via_export_returns_legacy_spend_shape(
     assert fb["cpc"] == 0.5
 
 
+async def test_spend_via_export_sums_clicks_across_daily_rows(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    """Daily granularity returns one raw row per platform per day. `ecpc` is a
+    per-row ratio that the aggregator nulls when a group spans multiple rows, so
+    clicks MUST be derived per raw row (spend / ecpc) and summed — never divided
+    out of an aggregated ecpc, which would yield zero clicks for every multi-day
+    platform (the live-verification bug)."""
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    csv_content = (
+        "breakdown_platform_northbeam,spend,imprs,ecpc\n"
+        "Facebook Ads,100000,5000000,0.50\n"   # 200,000 clicks
+        "Facebook Ads,50000,4000000,0.25\n"    # 200,000 clicks
+    )
+
+    with respx.mock:
+        _mock_export_options(sample_export_options)
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        result = await _spend_via_export(
+            config=config,
+            date_start="2026-05-01",
+            date_end="2026-05-31",
+        )
+
+    fb = next(r for r in result["data"] if r["platform_name"] == "Facebook Ads")
+    assert fb["spend"] == 150000.0
+    assert fb["impressions"] == 9000000.0
+    assert fb["clicks"] == 400000.0  # 200,000 + 200,000, NOT 0
+    assert fb["cpc"] == 0.38  # 150000 / 400000, rounded
+
+
 async def test_spend_via_export_filters_by_platform_name(
     config,
     sample_export_options,

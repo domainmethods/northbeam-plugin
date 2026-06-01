@@ -87,15 +87,22 @@ def _spend_rows_from_aggregated(
     """Convert aggregated Data Export rows into the legacy spend-row shape
     (`platform_name`, optionally `campaign_name`, `spend`, `impressions`,
     `clicks`) that the analyze capabilities consume. Impressions come from the
-    `imprs`-backed `impressions` metric; clicks are derived from `ecpc`
-    (clicks = spend / ecpc). When `campaign_key` is set (campaign-level exports),
-    each row also carries `campaign_name`."""
+    `imprs`-backed `impressions` metric. Clicks come from the aggregator's
+    summed per-raw-row `clicks` (each row's spend / ecpc) when present; otherwise
+    they fall back to spend / aggregated-ecpc for single-row groups. When
+    `campaign_key` is set (campaign-level exports), each row also carries
+    `campaign_name`."""
     rows: list[dict[str, Any]] = []
     for entry in aggregated:
         spend = _safe_float(entry.get("spend"))
         impressions = _safe_float(entry.get("impressions"))
-        ecpc = _safe_float(entry.get("ecpc"))
-        clicks = spend / ecpc if ecpc > 0 else 0.0
+        if "clicks" in entry:
+            # Aggregator summed per-raw-row clicks (spend/ecpc); use directly,
+            # since an aggregated ecpc is nulled across multi-row groups.
+            clicks = _safe_float(entry.get("clicks"))
+        else:
+            ecpc = _safe_float(entry.get("ecpc"))
+            clicks = spend / ecpc if ecpc > 0 else 0.0
         row = {
             "platform_name": entry.get(breakdown_key) or "Unknown",
             "spend": spend,
@@ -532,6 +539,12 @@ def _aggregate_export_rows(
         lambda: {"_count": 0}
     )
 
+    # `ecpc` (cost per click) is a per-row ratio, so an aggregated ecpc is null
+    # for any group spanning multiple raw rows (e.g. daily granularity). Derive
+    # clicks at the raw-row level (clicks = spend / ecpc) and sum them — an
+    # additive quantity that survives aggregation — so CPC/CTR reconcile.
+    derive_clicks = "ecpc" in metrics and "spend" in metrics
+
     for row in rows:
         key = tuple(
             _first_row_value(row, breakdown_column_candidates(b))
@@ -539,6 +552,15 @@ def _aggregate_export_rows(
         )
         group = groups[key]
         group["_count"] += 1
+        if derive_clicks:
+            row_spend = _safe_float(
+                _first_row_value(row, metric_column_candidates("spend"), default=0)
+            )
+            row_ecpc = _safe_float(
+                _first_row_value(row, metric_column_candidates("ecpc"), default=0)
+            )
+            if row_ecpc > 0:
+                group["clicks"] = group.get("clicks", 0.0) + row_spend / row_ecpc
         for m in metrics:
             metric_value = _first_row_value(row, metric_column_candidates(m), default=0)
             value = _safe_float(metric_value)
@@ -557,6 +579,8 @@ def _aggregate_export_rows(
                 continue
             values = group.get("_metric_values", {}).get(m, [])
             entry[m] = round(values[0], 2) if len(values) == 1 else None
+        if derive_clicks:
+            entry["clicks"] = group.get("clicks", 0.0)
         entry["_row_count"] = group["_count"]
         aggregated.append(entry)
 

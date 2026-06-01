@@ -106,8 +106,12 @@ async def test_portfolio_health_full_flow(
 ):
     monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
 
+    # The live Data Export returns attributed revenue in a column literally
+    # named `attributed_rev` even though the requested metric id is
+    # `revAttributed` (mirrors the `imprs`/`impressions` mismatch). The fixture
+    # uses the real column name so the metric-id->column alias is exercised.
     csv_content = (
-        "breakdown_platform_northbeam,spend,imprs,ecpc,revAttributed,roas,accounting_mode\n"
+        "breakdown_platform_northbeam,spend,imprs,ecpc,attributed_rev,roas,accounting_mode\n"
         "Facebook Ads,407056.74,10000000,0.50,89097.31,0.22,Accrual performance\n"
         "Facebook Ads,407056.74,10000000,0.50,154000.00,0.38,Cash snapshot\n"
         "TikTok,70866.64,3000000,0.40,20000.00,0.28,Accrual performance\n"

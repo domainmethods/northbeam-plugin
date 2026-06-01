@@ -496,7 +496,7 @@ async def test_data_export_full_flow(
             config=config,
             date_start="2026-04-14",
             date_end="2026-04-20",
-            metrics=["rev", "roas"],
+            metrics=["revAttributed", "roas"],
             breakdowns=["platform"],
         )
 
@@ -509,7 +509,7 @@ async def test_data_export_full_flow(
     assert result["summary"]["attribution_window"] == "1"
     assert len(result["data"]) == 2
     assert result["data"][0]["platform"] == "Facebook Ads"
-    assert result["data"][0]["rev"] == 1500.0
+    assert result["data"][0]["revAttributed"] == 1500.0
     assert result["data"][0]["roas"] == 3.2
 
 

@@ -53,9 +53,17 @@ def sample_export_options():
                 {"key": "Category (Northbeam)", "values": ["Email", "Paid - Prospecting"]},
             ]
         },
-        "metrics": {"metrics": [{"id": "rev", "label": "Rev"}, {"id": "txns", "label": "Transactions"}]},
+        "metrics": {"metrics": [
+            {"id": "revAttributed", "label": "Attributed Rev"},
+            {"id": "txns", "label": "Transactions"},
+            {"id": "spend", "label": "Spend"},
+        ]},
         "attribution_models": {
-            "attribution_models": [{"id": "northbeam_custom__va", "name": "Clicks + Modeled Views"}]
+            "attribution_models": [
+                {"id": "northbeam_custom", "name": "Clicks only"},
+                {"id": "northbeam_custom__enh", "name": "Clicks + Deterministic Views"},
+                {"id": "northbeam_custom__va", "name": "Clicks + Modeled Views"},
+            ]
         },
     }
 
@@ -76,7 +84,7 @@ def sample_export_completed_response():
 @pytest.fixture
 def sample_export_csv():
     return (
-        "breakdown_platform_northbeam,campaign_name,rev,roas\n"
+        "breakdown_platform_northbeam,campaign_name,revAttributed,roas\n"
         "Facebook Ads,FB_Prospecting,1500.00,3.20\n"
         "TikTok,TT_Retargeting,800.00,2.10\n"
     )

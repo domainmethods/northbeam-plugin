@@ -730,8 +730,13 @@ async def _data_export(
 
 @mcp.tool()
 async def northbeam_check_connection() -> str:
-    """Check Northbeam API connectivity. Validates credentials and reports
-    the environment (prod/uat) and which ad platforms are visible."""
+    """Check Northbeam API connectivity and report the environment (prod/uat).
+
+    Validates three surfaces: the Uploaded Spend API (a zero row count is normal
+    for natively-integrated accounts — real ad spend comes from the Data Export
+    API), Data Export metadata, and a small Data Export outcome probe
+    (transactions + revAttributed). Also lists any platforms with uploaded spend.
+    """
     return await _check_connection()
 
 

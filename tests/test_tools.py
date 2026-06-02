@@ -30,7 +30,7 @@ def _mock_successful_connection_outcome(
     sample_export_options,
     sample_export_create_response,
     sample_export_completed_response,
-    csv_content="transactions,revAttributed\n0,0\n",
+    csv_content="transactions,attributed_rev\n0,0\n",
 ):
     _mock_export_options(sample_export_options)
     respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
@@ -180,7 +180,7 @@ async def test_check_connection_reports_spend_and_outcome_surfaces(
         "total_pages": 1,
         "total_count": 0,
     }
-    csv_content = "transactions,revAttributed\n80.38863860198144,18372.969881449368\n"
+    csv_content = "transactions,attributed_rev\n80.38863860198144,18372.969881449368\n"
 
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
@@ -943,6 +943,57 @@ def test_aggregate_export_rows_without_partition_column_is_unchanged():
 
     assert len(result) == 1
     assert result[0]["spend"] == 300.0
+
+
+def test_aggregate_export_rows_raises_when_multiple_modes_none_match():
+    """If the accounting-mode column is present with MULTIPLE distinct modes but
+    none matches the requested one (e.g. Northbeam relabels 'Accrual
+    performance'), summing would silently double spend. Fail loud instead."""
+    rows = [
+        {"breakdown_platform_northbeam": "Facebook Ads", "spend": "100",
+         "accounting_mode": "Cash snapshot"},
+        {"breakdown_platform_northbeam": "Facebook Ads", "spend": "100",
+         "accounting_mode": "Lifetime blended"},
+    ]
+
+    with pytest.raises(ToolError, match="accounting mode"):
+        _aggregate_export_rows(
+            rows, ["platform"], ["spend"], accounting_mode="accrual"
+        )
+
+
+def test_aggregate_export_rows_single_unmatched_mode_keeps_rows():
+    """A single accounting mode that doesn't match cannot double spend, so keep
+    the rows (no fan-out to drop) rather than raising."""
+    rows = [
+        {"breakdown_platform_northbeam": "Facebook Ads", "spend": "100",
+         "accounting_mode": "Cash snapshot"},
+        {"breakdown_platform_northbeam": "Facebook Ads", "spend": "200",
+         "accounting_mode": "Cash snapshot"},
+    ]
+
+    result = _aggregate_export_rows(
+        rows, ["platform"], ["spend"], accounting_mode="accrual"
+    )
+
+    assert len(result) == 1
+    assert result[0]["spend"] == 300.0
+
+
+def test_aggregate_export_rows_omits_clicks_unless_requested():
+    """Generic exports must NOT gain an unsolicited derived `clicks` field; it is
+    only attached when the spend path explicitly opts in via derive_clicks."""
+    rows = [
+        {"breakdown_platform_northbeam": "Facebook Ads", "spend": "100", "ecpc": "0.5"},
+    ]
+
+    generic = _aggregate_export_rows(rows, ["platform"], ["spend", "ecpc"])
+    assert "clicks" not in generic[0]
+
+    opted_in = _aggregate_export_rows(
+        rows, ["platform"], ["spend", "ecpc"], derive_clicks=True
+    )
+    assert opted_in[0]["clicks"] == 200.0
 
 
 def test_spend_rows_from_aggregated_derives_clicks_and_impressions():

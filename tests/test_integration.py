@@ -119,7 +119,7 @@ async def test_check_connection_shows_all_platforms(config, monkeypatch):
         "total_pages": 1,
         "total_count": 3,
     }
-    csv_content = "transactions,revAttributed\n5,1234.56\n"
+    csv_content = "transactions,attributed_rev\n5,1234.56\n"
 
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(

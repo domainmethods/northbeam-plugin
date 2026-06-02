@@ -84,7 +84,10 @@ def sample_export_completed_response():
 @pytest.fixture
 def sample_export_csv():
     return (
-        "breakdown_platform_northbeam,campaign_name,revAttributed,roas\n"
+        # Live export returns attributed revenue in column `attributed_rev`
+        # (requested metric id is `revAttributed`); use the real column name so
+        # the metric-id->column alias is exercised end-to-end.
+        "breakdown_platform_northbeam,campaign_name,attributed_rev,roas\n"
         "Facebook Ads,FB_Prospecting,1500.00,3.20\n"
         "TikTok,TT_Retargeting,800.00,2.10\n"
     )

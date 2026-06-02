@@ -516,14 +516,28 @@ def _select_accounting_partition(
         row for row in rows
         if str(row.get(column, "")).strip().lower().startswith(needle)
     ]
-    if not filtered:
-        logger.warning(
-            "accounting-mode column %r present but no rows matched %r; "
-            "keeping all rows (verify the partition column name)",
-            column, accounting_mode,
+    if filtered:
+        return filtered
+
+    # Nothing matched the requested mode. If several distinct modes are present,
+    # summing them would double spend (the very fan-out this guard prevents) and
+    # we cannot tell which rows to keep — fail loud rather than return
+    # silently-doubled numbers. A single unmatched mode cannot double spend, so
+    # keep those rows with a warning.
+    distinct = sorted({str(row.get(column, "")).strip() for row in rows})
+    if len(distinct) > 1:
+        raise ToolError(
+            f"Data Export returned multiple accounting modes {distinct} in column "
+            f"{column!r}, none matching the requested mode {accounting_mode!r}; "
+            f"refusing to aggregate to avoid double-counting spend. Verify the "
+            f"accounting-mode value format in data_export.PARTITION_COLUMN_ALIASES."
         )
-        return rows
-    return filtered
+    logger.warning(
+        "accounting-mode column %r present with a single unmatched mode %r "
+        "(requested %r); keeping rows (no fan-out to drop)",
+        column, distinct[0] if distinct else "", accounting_mode,
+    )
+    return rows
 
 
 def _aggregate_export_rows(
@@ -531,9 +545,13 @@ def _aggregate_export_rows(
     breakdowns: list[str],
     metrics: list[str],
     accounting_mode: str | None = None,
+    derive_clicks: bool = False,
 ) -> list[dict[str, Any]]:
     """Aggregate raw CSV rows by breakdown keys, after dropping fan-out
-    duplicate accounting-mode rows."""
+    duplicate accounting-mode rows. When `derive_clicks` is set (the spend and
+    portfolio paths), a summed per-raw-row `clicks` field is attached; generic
+    exports leave it off so the response contract stays exactly the requested
+    metrics."""
     rows = _select_accounting_partition(rows, accounting_mode)
     groups: dict[tuple, dict[str, Any]] = defaultdict(
         lambda: {"_count": 0}
@@ -543,7 +561,7 @@ def _aggregate_export_rows(
     # for any group spanning multiple raw rows (e.g. daily granularity). Derive
     # clicks at the raw-row level (clicks = spend / ecpc) and sum them — an
     # additive quantity that survives aggregation — so CPC/CTR reconcile.
-    derive_clicks = "ecpc" in metrics and "spend" in metrics
+    derive_clicks = derive_clicks and "ecpc" in metrics and "spend" in metrics
 
     for row in rows:
         key = tuple(
@@ -857,6 +875,7 @@ async def _run_export_pipeline(
             effective_breakdowns,
             effective_metrics,
             accounting_mode=accounting_mode,
+            derive_clicks=True,
         )
     return []
 

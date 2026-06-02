@@ -2,7 +2,15 @@
 
 **Ask plain-English questions about your ad spend and get instant analysis — no spreadsheets, no SQL.**
 
-This plugin connects Claude (or Codex) to your Northbeam account so you can ask things like *"How are we doing this month?"* or *"Which channels should I cut?"* and get a clear, data-backed answer drawn straight from your real numbers. It pulls spend, efficiency (clicks, CPC, CPM, CTR), and outcomes (revenue, ROAS, CAC, orders) and turns them into the kind of summary you'd otherwise spend an hour building by hand.
+This plugin connects Claude Code (or Codex) to your Northbeam account so you can ask things like *"How are we doing this month?"* or *"Which channels should I cut?"* and get a clear, data-backed answer drawn straight from your real numbers. It pulls spend, efficiency (clicks, CPC, CPM, CTR), and outcomes (revenue, ROAS, CAC, orders) and turns them into the kind of summary you'd otherwise spend an hour building by hand.
+
+---
+
+## Where this works
+
+Use this plugin in **Claude Code** (the terminal or desktop coding tool) or **Codex**. Those launch the small local connector that actually fetches your Northbeam data.
+
+It does **not** work in the **Claude.ai chat app**, **Claude Cowork**, or **Claude Code on the web**. Those load the plugin's commands but run in a cloud sandbox that can't start the local connector — so the `/northbeam:*` commands show up, but the assistant can't pull your numbers. That's a current Anthropic platform limitation (those environments only support cloud-hosted connectors), not a setup mistake. Stick to Claude Code in your terminal, or Codex.
 
 ---
 
@@ -115,6 +123,9 @@ Your keys are missing or wrong. Run `/northbeam:setup` to re-check, and confirm 
 
 **Zero uploaded spend, but you know you're spending**
 That's normal. If your ad accounts are connected to Northbeam directly, your real spend comes through the Data Export (which the plugin uses automatically) — the separate "uploaded spend" number is only for manually-uploaded, non-integrated channels and is expected to be `0`.
+
+**The `/northbeam:*` commands appear, but the assistant can't pull any data**
+You're probably in the Claude.ai chat app, Claude Cowork, or Claude Code on the web. Those load the plugin's commands but don't run its local data connector (see [Where this works](#where-this-works)). Switch to Claude Code in your terminal — or Codex — where the connector runs.
 
 **The plugin won't start / `uv` errors**
 Make sure `uv` installed correctly:
@@ -231,6 +242,15 @@ cd northbeam && uv run --extra dev pytest
   ```bash
   cd northbeam && uv run python -c "import server.northbeam_mcp; print('ok')"
   ```
+
+- **Windows: `FileNotFoundError: [WinError 3]` on `jsonschema_specifications\schemas\...`** — this is Windows' 260-character path limit (`MAX_PATH`). The Claude Code desktop app installs plugins under a very deep session directory, and the Python environment's JSON-schema tree tips the total path over the limit. The plugin avoids this automatically by relocating its virtualenv to a short path via `UV_PROJECT_ENVIRONMENT` (`%LOCALAPPDATA%\northbeam-mcp-venv`) in `.mcp.claude.json` — no admin rights or registry change needed. **Codex on Windows** uses a separate config that does not support variable expansion, so if you ever hit the same error there, set a short venv path in your shell before launching Codex:
+
+  ```powershell
+  $env:UV_PROJECT_ENVIRONMENT = "$env:LOCALAPPDATA\northbeam-mcp-venv"
+  codex
+  ```
+
+  (Codex reads `UV_PROJECT_ENVIRONMENT` from the parent environment. Use `setx UV_PROJECT_ENVIRONMENT "%LOCALAPPDATA%\northbeam-mcp-venv"` to make it persistent.)
 
 - **Codex plugin not loading** — check `codex plugin list`, reinstall with `codex plugin add northbeam@northbeam-plugin` after editing `northbeam/.codex-plugin/plugin.json`, and start a new Codex thread.
 

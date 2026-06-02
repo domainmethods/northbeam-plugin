@@ -5,6 +5,7 @@
       "args": ["run", "python", "-m", "server.northbeam_mcp"],
       "cwd": "${CLAUDE_PLUGIN_ROOT}",
       "env": {
+        "UV_PROJECT_ENVIRONMENT": "${LOCALAPPDATA:-.}/northbeam-mcp-venv",
         "NORTHBEAM_API_KEY": "${user_config.NORTHBEAM_API_KEY}",
         "NORTHBEAM_CLIENT_ID": "${user_config.NORTHBEAM_CLIENT_ID}",
         "NORTHBEAM_API_ENV": "${user_config.NORTHBEAM_API_ENV}"

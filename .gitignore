@@ -6,6 +6,7 @@ __pycache__/
 .env.*
 !.env.example
 .venv/
+northbeam-mcp-venv/
 .spec-workflow/
 *.egg-info/
 dist/

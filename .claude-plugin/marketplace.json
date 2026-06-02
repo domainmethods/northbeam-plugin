@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Northbeam Spend Intelligence plugin marketplace",
-    "version": "1.0.1"
+    "version": "1.0.2"
   },
   "plugins": [
     {
       "name": "northbeam",
       "source": "./northbeam",
       "description": "Northbeam Spend Intelligence — strategic spend analysis, anomaly detection, and budget optimization via the Northbeam API",
-      "version": "1.0.1"
+      "version": "1.0.2"
     }
   ]
 }

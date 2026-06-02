@@ -184,3 +184,43 @@ def test_date_column_candidates_returns_live_csv_name():
     # Live-verified 2026-06-01: a DATE-aggregated export names the per-day column
     # exactly `date` (values formatted YYYY-MM-DD).
     assert date_column_candidates() == ["date"]
+
+
+def test_build_data_export_payload_rejects_reversed_date_range():
+    with pytest.raises(ValueError, match="before date_start"):
+        build_data_export_payload(
+            date_start="2026-05-31",
+            date_end="2026-05-01",
+            metrics=["spend"],
+            breakdowns=[],
+        )
+
+
+def test_build_data_export_payload_allows_single_day_range():
+    payload = build_data_export_payload(
+        date_start="2026-05-15",
+        date_end="2026-05-15",
+        metrics=["spend"],
+        breakdowns=[],
+    )
+
+    assert payload["period_options"]["period_starting_at"] == "2026-05-15T00:00:00Z"
+    assert payload["period_options"]["period_ending_at"] == "2026-05-15T23:59:59Z"
+
+
+def test_extract_download_url_rejects_non_http_candidate():
+    # A status string or error object must not be treated as a download URL.
+    assert extract_download_url({"download_url": "PENDING"}) is None
+    assert extract_download_url({"result": ["not-a-url"]}) is None
+    assert extract_download_url({"result": "still-processing"}) is None
+
+
+def test_extract_download_url_accepts_https():
+    assert (
+        extract_download_url({"download_url": "https://storage.example.com/x.csv"})
+        == "https://storage.example.com/x.csv"
+    )
+    assert (
+        extract_download_url({"result": ["https://storage.example.com/y.csv"]})
+        == "https://storage.example.com/y.csv"
+    )

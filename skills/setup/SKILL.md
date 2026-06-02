@@ -1,7 +1,7 @@
 ---
 name: setup
 description: Check Northbeam API credentials, configure connection, and set up business context profile. Use when first connecting to Northbeam or troubleshooting authentication issues.
-allowed-tools: mcp__northbeam__northbeam_check_connection, mcp__northbeam__northbeam_spend, mcp__northbeam__northbeam_list_uploaded_spend, Read, Write
+allowed-tools: mcp__northbeam__northbeam_check_connection, Read, Write
 user-invocable: true
 disable-model-invocation: false
 ---
@@ -81,6 +81,11 @@ Ask the user if they'd like to set up a business context profile. Explain that i
 - Target-relative analysis ("CPC is 20% above your $2.00 target")
 - Campaign naming intelligence ("group by funnel stage from your naming convention")
 
+The profile schema is documented in `${CLAUDE_PLUGIN_ROOT}/config/profile-template.json`
+(fields: `monthly_budgets`, `targets`, `roas_goal`, `campaign_naming_pattern`,
+`fiscal_month_start`, `currency`). Read it first if you want the exact structure
+the analyze skill expects, then collect values for those fields.
+
 If they want to proceed, ask them one question at a time:
 
 1. **Monthly budgets by platform:** "What's your monthly budget for each platform? (e.g., Facebook: $25,000, TikTok: $10,000)"
@@ -89,6 +94,8 @@ If they want to proceed, ask them one question at a time:
 4. **Campaign naming convention:** "Do your campaign names follow a pattern? For example: FB_Prospecting_LAL1_US_Q2_Video. If so, describe the segments." (offer to skip)
 5. **Currency:** "What currency are your budgets in?" (default USD)
 
-After collecting answers, write the profile to `~/.northbeam/profile.json` using the Write tool. Confirm the file was saved.
+After collecting answers, write the profile to `~/.northbeam/profile.json` using the
+Write tool, following the structure in
+`${CLAUDE_PLUGIN_ROOT}/config/profile-template.json`. Confirm the file was saved.
 
 If they decline the profile, that's fine - the analyze skill works without it (just without budget pacing and target comparisons).

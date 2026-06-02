@@ -3,7 +3,7 @@
   "description": "Northbeam Spend Intelligence — strategic spend analysis, anomaly detection, and budget optimization via the Northbeam API",
   "version": "1.0.1",
   "author": {
-    "name": "WeightCare"
+    "name": "Domain Methods"
   },
   "mcpServers": "./.mcp.claude.json",
   "userConfig": {

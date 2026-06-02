@@ -124,7 +124,7 @@ class NorthbeamClient:
             "data": all_data,
             "total_count": result.get("total_count") or len(all_data),
             "pages_fetched": current_page,
-            "capped": current_page >= MAX_PAGES and total_pages > MAX_PAGES,
+            "capped": total_pages > MAX_PAGES,
         }
 
     async def list_export_options(self) -> dict[str, Any]:
@@ -191,7 +191,15 @@ class NorthbeamClient:
                 f"Export CSV download failed: {e.__class__.__name__}"
             ) from None
 
-        reader = csv.DictReader(io.StringIO(response.text))
+        # Northbeam's signed-URL CSVs are often UTF-8 with a BOM; decoding as
+        # utf-8-sig strips it so the first column header isn't read as
+        # "﻿breakdown_..." and silently failing every column lookup.
+        try:
+            text = response.content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = response.text
+
+        reader = csv.DictReader(io.StringIO(text))
         columns = list(reader.fieldnames or [])
         if not columns:
             return {"data": [], "total_rows": 0, "columns": []}
@@ -241,8 +249,15 @@ class NorthbeamClient:
 
             if response.status_code == 429:
                 if attempt < MAX_RETRIES - 1:
+                    retry_after_header = response.headers.get("Retry-After")
                     try:
-                        retry_after = float(response.headers.get("Retry-After", INITIAL_BACKOFF))
+                        # Honor a numeric Retry-After; otherwise (missing header
+                        # or an HTTP-date we don't parse) back off exponentially.
+                        retry_after = (
+                            float(retry_after_header)
+                            if retry_after_header is not None
+                            else INITIAL_BACKOFF * (2 ** attempt)
+                        )
                     except ValueError:
                         retry_after = INITIAL_BACKOFF * (2 ** attempt)
                     await asyncio.sleep(retry_after)
@@ -264,7 +279,11 @@ class NorthbeamClient:
             try:
                 return response.json()
             except ValueError:
-                raise NorthbeamAPIError(f"Invalid JSON response: {response.text}")
+                # Don't echo the raw body — it may carry signed-URL tokens or
+                # other sensitive content into logs/clients.
+                raise NorthbeamAPIError(
+                    f"Invalid JSON response from Northbeam API (HTTP {response.status_code})"
+                )
 
     @staticmethod
     def _parse_body(response: httpx.Response) -> dict[str, Any]:

@@ -376,7 +376,7 @@ Deliver a snapshot of overall marketing portfolio health. Trigger when the user 
 
 ### Data Source
 
-Call `northbeam_portfolio_health` — it runs spend and data export concurrently and returns blended metrics, per-platform breakdown with spend share, and outcome data (revenue, ROAS) in one response. Defaults to month-to-date.
+Call `northbeam_portfolio_health` — it runs a single combined Data Export (so spend and revenue come from the same accrual rows) and returns blended metrics, per-platform breakdown with spend share, and per-platform outcomes (revAttributed, ROAS) in one response. Defaults to month-to-date.
 
 For MoM comparison, call it again with the prior month's date range.
 
@@ -393,10 +393,10 @@ For MoM comparison, call it again with the prior month's date range.
 - Flag any platform more than 20% above or below blended average
 
 **2b. Outcome Metrics**
-- Blended ROAS across all channels only when the returned outcome rows include valid ROAS values or enough additive inputs to compute it
-- Per-platform ROAS with MoM delta, skipping `null` ratio values instead of treating them as zero
+- Blended ROAS across all channels from `summary.blended_roas` (computed from total revenue / total spend; `null` when no revenue was returned — present it as "N/A", not zero)
+- Per-platform ROAS from the `outcomes` array (`outcomes[].roas`, recomputed from each platform's summed revenue / spend); skip `null` values instead of treating them as zero
 - Flag any platform with ROAS below profile `roas_goal` target
-- If `outcome_error` is present, note that outcome data was unavailable and fall back to spend-only analysis
+- If the call fails outright (it raises rather than returning partial data), fall back to a spend-only analysis via `northbeam_spend` and note that outcomes were unavailable
 
 **3. Budget Pacing** *(only if profile budgets exist)*
 - Pacing status for each channel (over / on track / under)

@@ -290,3 +290,38 @@ def test_aggregate_spend_by_platform_handles_non_numeric():
     assert fb["spend"] == 100.0
     assert fb["clicks"] == 50
     assert fb["impressions"] == 15000
+
+
+def test_compute_blended_metrics_includes_roas_when_revenue_present():
+    rows = [
+        {"spend": 100, "clicks": 50, "impressions": 10000, "revAttributed": 300},
+        {"spend": 300, "clicks": 100, "impressions": 20000, "revAttributed": 300},
+    ]
+
+    result = _compute_blended_metrics(rows)
+
+    # total_revenue=600, total_spend=400 -> blended_roas = 1.5
+    assert result["blended_roas"] == 1.5
+
+
+def test_compute_blended_metrics_roas_none_without_revenue():
+    rows = [{"spend": 100, "clicks": 50, "impressions": 10000}]
+
+    result = _compute_blended_metrics(rows)
+
+    assert result["blended_roas"] is None
+
+
+def test_aggregate_spend_by_platform_includes_roas_when_revenue_present():
+    rows = [
+        {"platform_name": "Facebook", "spend": 100, "clicks": 50,
+         "impressions": 10000, "revAttributed": 250},
+        {"platform_name": "TikTok", "spend": 50, "clicks": 25, "impressions": 5000},
+    ]
+
+    result = _aggregate_spend_by_platform(rows)
+
+    fb = next(p for p in result if p["platform"] == "Facebook")
+    tt = next(p for p in result if p["platform"] == "TikTok")
+    assert fb["roas"] == 2.5  # 250 / 100
+    assert tt["roas"] is None  # no revenue on this platform's rows

@@ -1481,3 +1481,92 @@ async def test_spend_via_export_rejects_unknown_granularity(config):
             date_end="2026-05-31",
             time_granularity="hourly",
         )
+
+
+def test_aggregate_export_rows_recomputes_roas_from_components_for_multirow_group():
+    """A ratio metric over a multi-row group must be rebuilt from the summed
+    additive components, not left null, when those components are present."""
+    rows = [
+        {"breakdown_platform_northbeam": "Facebook Ads", "spend": "100",
+         "revAttributed": "300", "accounting_mode": "Accrual performance"},
+        {"breakdown_platform_northbeam": "Facebook Ads", "spend": "300",
+         "revAttributed": "300", "accounting_mode": "Accrual performance"},
+    ]
+
+    result = _aggregate_export_rows(
+        rows, ["platform"], ["spend", "revAttributed", "roas"],
+        accounting_mode="accrual",
+    )
+
+    assert len(result) == 1
+    # spend=400, revAttributed=600 -> roas = 600/400 = 1.5 (not null, not averaged)
+    assert result[0]["spend"] == 400.0
+    assert result[0]["revAttributed"] == 600.0
+    assert result[0]["roas"] == 1.5
+
+
+def test_aggregate_export_rows_roas_null_when_no_spend_component():
+    """Without a spend component the ratio cannot be rebuilt; a multi-row group
+    falls back to null rather than averaging per-row ratios."""
+    rows = [
+        {"platform": "Facebook", "revenue": "1000", "roas": "3.0"},
+        {"platform": "Facebook", "revenue": "500", "roas": "2.0"},
+    ]
+
+    result = _aggregate_export_rows(rows, ["platform"], ["revenue", "roas"])
+
+    assert result[0]["revenue"] == 1500.0
+    assert result[0]["roas"] is None
+
+
+def test_aggregate_export_rows_raises_on_unresolved_breakdown_column():
+    rows = [{"platform": "Facebook", "spend": "100"}]
+
+    with pytest.raises(ToolError, match="Breakdown 'campaign'"):
+        _aggregate_export_rows(rows, ["campaign"], ["spend"])
+
+
+def test_aggregate_export_rows_raises_on_unresolved_additive_metric_column():
+    rows = [{"breakdown_platform_northbeam": "Facebook", "spend": "100"}]
+
+    with pytest.raises(ToolError, match="Metric 'revAttributed'"):
+        _aggregate_export_rows(rows, ["platform"], ["spend", "revAttributed"])
+
+
+def test_aggregate_export_rows_raises_when_daily_lacks_date_column():
+    rows = [{"breakdown_platform_northbeam": "Facebook", "spend": "100"}]
+
+    with pytest.raises(ToolError, match="date column"):
+        _aggregate_export_rows(
+            rows, ["platform"], ["spend"], group_by_date=True
+        )
+
+
+def test_aggregate_export_rows_raises_on_fanout_without_accounting_column():
+    """When both spend and a revenue metric are requested, the accounting-mode
+    column is missing, and spend is duplicated per breakdown (the fan-out
+    signature), refuse to aggregate rather than silently double spend."""
+    rows = [
+        {"breakdown_platform_northbeam": "Facebook Ads", "spend": "100", "revAttributed": "300"},
+        {"breakdown_platform_northbeam": "Facebook Ads", "spend": "100", "revAttributed": "500"},
+    ]
+
+    with pytest.raises(ToolError, match="fanned out"):
+        _aggregate_export_rows(
+            rows, ["platform"], ["spend", "revAttributed"], accounting_mode="accrual"
+        )
+
+
+def test_aggregate_export_rows_no_fanout_guard_without_spend_metric():
+    """Revenue requested without spend cannot double-count spend; the fan-out
+    guard must not fire even when rows share a duplicate value."""
+    rows = [
+        {"breakdown_platform_northbeam": "Facebook Ads", "revAttributed": "300"},
+        {"breakdown_platform_northbeam": "Facebook Ads", "revAttributed": "300"},
+    ]
+
+    result = _aggregate_export_rows(
+        rows, ["platform"], ["revAttributed"], accounting_mode="accrual"
+    )
+
+    assert result[0]["revAttributed"] == 600.0

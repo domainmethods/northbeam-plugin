@@ -53,6 +53,29 @@ ADDITIVE_EXPORT_METRICS = {
     "txns",
 }
 
+# Requesting any of these makes the Data Export fan out into one row per
+# accounting mode (accrual + cash), repeating spend on each.
+REVENUE_EXPORT_METRICS = {"rev", "revattributed", "revenue", "roas"}
+
+_SPEND_COMPONENT_NAMES = ("spend", "cost")
+_REVENUE_COMPONENT_NAMES = ("revattributed", "rev", "revenue")
+_TXN_COMPONENT_NAMES = ("txns", "transactions", "orders", "conversions", "conversion")
+
+# Ratio metrics, recomputed from summed additive components when those inputs are
+# present in the aggregated group: (numerator_names, denominator_names, scale).
+# A per-row ratio cannot be summed or averaged across raw rows, so a group
+# spanning multiple raw rows (daily granularity, multi-campaign platforms, or
+# revenue fan-out) must rebuild the ratio from its additive parts. Computing it
+# the same way for single- and multi-row groups also keeps the two consistent.
+_RATIO_METRIC_COMPONENTS = {
+    "roas": (_REVENUE_COMPONENT_NAMES, _SPEND_COMPONENT_NAMES, 1.0),
+    "cac": (_SPEND_COMPONENT_NAMES, _TXN_COMPONENT_NAMES, 1.0),
+    "cpc": (_SPEND_COMPONENT_NAMES, ("clicks",), 1.0),
+    "ecpc": (_SPEND_COMPONENT_NAMES, ("clicks",), 1.0),
+    "cpm": (_SPEND_COMPONENT_NAMES, ("impressions",), 1000.0),
+    "ctr": (("clicks",), ("impressions",), 100.0),
+}
+
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -63,6 +86,45 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 def _is_additive_export_metric(metric: str) -> bool:
     return metric.lower() in ADDITIVE_EXPORT_METRICS
+
+
+def _metrics_contain(metrics: list[str] | None, names: set[str]) -> bool:
+    return any(metric.lower() in names for metric in (metrics or []))
+
+
+def _row_revenue(row: dict[str, Any]) -> float | None:
+    """Return a row's attributed revenue from whichever revenue key is present
+    (revAttributed preferred), or None when the row carries no revenue."""
+    for name in ("revAttributed", "rev", "revenue"):
+        if row.get(name) is not None:
+            return _safe_float(row.get(name))
+    return None
+
+
+def _rows_have_revenue(rows: list[dict[str, Any]]) -> bool:
+    return any(_row_revenue(row) is not None for row in rows)
+
+
+def _recompute_ratio_metric(metric: str, group: dict[str, Any]) -> float | None:
+    """Recompute a ratio metric from the group's summed additive components.
+
+    Returns None when the numerator or denominator inputs are absent from the
+    group or the denominator is zero, so the caller can fall back to a single
+    passthrough value (or null for genuinely un-summable multi-row groups)."""
+    spec = _RATIO_METRIC_COMPONENTS.get(metric.lower())
+    if spec is None:
+        return None
+    numerator_names, denominator_names, scale = spec
+    sums = {
+        key.lower(): float(value)
+        for key, value in group.items()
+        if key not in ("_count", "_metric_values") and isinstance(value, (int, float))
+    }
+    numerator = next((sums[n] for n in numerator_names if n in sums), None)
+    denominator = next((sums[n] for n in denominator_names if n in sums), None)
+    if numerator is None or denominator is None or denominator == 0:
+        return None
+    return round((numerator / denominator) * scale, 2)
 
 
 def _first_row_value(row: dict[str, Any], candidates: list[str], default: Any = "") -> Any:
@@ -120,6 +182,12 @@ def _spend_rows_from_aggregated(
             row["date"] = entry.get("date")
         if campaign_key:
             row["campaign_name"] = entry.get(campaign_key) or "Unknown"
+        # Pass through attributed revenue when the export carried it (portfolio
+        # health requests revAttributed), so downstream blended/per-platform ROAS
+        # can be computed. Spend-only entries have no revenue and are unchanged.
+        revenue = _row_revenue(entry)
+        if revenue is not None:
+            row["revAttributed"] = revenue
         rows.append(row)
     return _enrich_spend_rows(rows)
 
@@ -539,9 +607,40 @@ async def northbeam_spend(
     )
 
 
+def _detect_accounting_fanout(
+    rows: list[dict[str, str]],
+    breakdowns: list[str],
+) -> bool:
+    """Heuristically detect revenue fan-out when no accounting-mode column is
+    present to dedupe on. Fan-out repeats each breakdown's row once per
+    accounting mode with identical spend, so a breakdown group containing two or
+    more rows sharing the same spend value is the signature. Used only as a
+    backstop: Northbeam normally returns the accounting-mode column, which the
+    column-based path dedupes directly."""
+    if not rows:
+        return False
+    spend_candidates = metric_column_candidates("spend")
+    groups: dict[tuple, list[str]] = defaultdict(list)
+    for row in rows:
+        key = tuple(
+            _first_row_value(row, breakdown_column_candidates(b), default="")
+            for b in breakdowns
+        )
+        spend_value = _first_row_value(row, spend_candidates, default=None)
+        if spend_value is not None:
+            groups[key].append(str(spend_value).strip())
+    for spend_values in groups.values():
+        if len(spend_values) - len(set(spend_values)) >= 1:
+            return True
+    return False
+
+
 def _select_accounting_partition(
     rows: list[dict[str, str]],
     accounting_mode: str | None,
+    *,
+    metrics: list[str] | None = None,
+    breakdowns: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Drop fan-out duplicates. When a revenue metric is requested the API
     returns one row per accounting mode (accrual + cash); spend is repeated on
@@ -552,6 +651,23 @@ def _select_accounting_partition(
     candidates = partition_column_candidates("accounting_mode")
     column = next((c for c in candidates if c in rows[0]), None)
     if column is None:
+        # No column to dedupe on. If both spend and a revenue metric were
+        # requested, fan-out would silently double spend — fail loud when the
+        # structural signature is present rather than return doubled numbers.
+        revenue_requested = _metrics_contain(metrics, REVENUE_EXPORT_METRICS)
+        spend_requested = _metrics_contain(metrics, set(_SPEND_COMPONENT_NAMES))
+        if (
+            revenue_requested
+            and spend_requested
+            and _detect_accounting_fanout(rows, breakdowns or [])
+        ):
+            raise ToolError(
+                "Data Export appears to have fanned out into multiple accounting "
+                "modes (duplicate spend per breakdown) but no accounting-mode "
+                "column was found to dedupe on; refusing to aggregate to avoid "
+                "double-counting spend. Add the accounting-mode column name to "
+                "data_export.PARTITION_COLUMN_ALIASES['accounting_mode']."
+            )
         return rows
     needle = accounting_mode.strip().lower()
     filtered = [
@@ -598,7 +714,40 @@ def _aggregate_export_rows(
     with export_aggregation="DATE"), the per-row `date` column is added to the
     group key and emitted on each entry, so the same breakdown on different days
     stays as separate rows forming a per-day time series."""
-    rows = _select_accounting_partition(rows, accounting_mode)
+    if rows:
+        # Fail loud when a requested breakdown, additive metric, or the date
+        # column does not resolve to any CSV column: _first_row_value would
+        # otherwise silently fall back to a default (empty/zero), producing
+        # confidently-wrong totals that look valid. Ratio metrics are exempt —
+        # they may be recomputed from components rather than read from a column.
+        sample = rows[0]
+        for b in breakdowns:
+            if not any(c in sample for c in breakdown_column_candidates(b)):
+                raise ToolError(
+                    f"Breakdown {b!r} did not match any column in the Data Export "
+                    f"(columns: {sorted(sample)}); tried {breakdown_column_candidates(b)}. "
+                    f"Add the live column name to data_export.BREAKDOWN_COLUMN_ALIASES."
+                )
+        for m in metrics:
+            if not _is_additive_export_metric(m):
+                continue
+            if not any(c in sample for c in metric_column_candidates(m)):
+                raise ToolError(
+                    f"Metric {m!r} did not match any column in the Data Export "
+                    f"(columns: {sorted(sample)}); tried {metric_column_candidates(m)}. "
+                    f"Add the live column name to data_export.METRIC_COLUMN_ALIASES."
+                )
+        if group_by_date and not any(c in sample for c in date_column_candidates()):
+            raise ToolError(
+                "Daily granularity requested (export_aggregation='DATE') but no date "
+                f"column was found in the Data Export (columns: {sorted(sample)}); "
+                f"tried {date_column_candidates()}. Add it to "
+                "data_export.DATE_COLUMN_CANDIDATES."
+            )
+
+    rows = _select_accounting_partition(
+        rows, accounting_mode, metrics=metrics, breakdowns=breakdowns
+    )
     groups: dict[tuple, dict[str, Any]] = defaultdict(
         lambda: {"_count": 0}
     )
@@ -650,14 +799,27 @@ def _aggregate_export_rows(
         entry: dict[str, Any] = dict(zip(breakdowns, breakdown_values))
         if group_by_date:
             entry["date"] = date_value
+        # Additive metrics first so the group's summed components are in place
+        # before any ratio is rebuilt from them.
         for m in metrics:
             if _is_additive_export_metric(m):
                 entry[m] = round(group.get(m, 0.0), 2)
+        if derive_clicks:
+            entry["clicks"] = group.get("clicks", 0.0)
+        # Ratio metrics: recompute from the summed additive components when those
+        # inputs are present (correct for multi-row groups, where a raw per-row
+        # ratio cannot be summed or averaged). Fall back to the single passthrough
+        # value for one-row groups, or null when a multi-row group lacks the
+        # components to rebuild the ratio.
+        for m in metrics:
+            if _is_additive_export_metric(m):
+                continue
+            recomputed = _recompute_ratio_metric(m, group)
+            if recomputed is not None:
+                entry[m] = recomputed
                 continue
             values = group.get("_metric_values", {}).get(m, [])
             entry[m] = round(values[0], 2) if len(values) == 1 else None
-        if derive_clicks:
-            entry["clicks"] = group.get("clicks", 0.0)
         entry["_row_count"] = group["_count"]
         aggregated.append(entry)
 
@@ -856,13 +1018,20 @@ def _compute_blended_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     total_clicks = sum(_safe_float(r.get("clicks")) for r in rows)
     total_impressions = sum(_safe_float(r.get("impressions")) for r in rows)
 
+    # Only roll up revenue/ROAS when at least one row actually carried revenue,
+    # so spend-only portfolios report blended_roas=None rather than a misleading 0.
+    revenue_values = [_row_revenue(r) for r in rows]
+    revenue_present = any(v is not None for v in revenue_values)
+    total_revenue = sum(v for v in revenue_values if v is not None)
+
     return {
         "total_spend": round(total_spend, 2),
-        "total_clicks": int(total_clicks),
-        "total_impressions": int(total_impressions),
+        "total_clicks": round(total_clicks),
+        "total_impressions": round(total_impressions),
         "blended_cpc": round(total_spend / total_clicks, 2) if total_clicks > 0 else None,
         "blended_cpm": round((total_spend / total_impressions) * 1000, 2) if total_impressions > 0 else None,
         "blended_ctr": round((total_clicks / total_impressions) * 100, 2) if total_impressions > 0 else None,
+        "blended_roas": round(total_revenue / total_spend, 2) if (revenue_present and total_spend > 0) else None,
     }
 
 
@@ -872,25 +1041,34 @@ def _aggregate_spend_by_platform(rows: list[dict[str, Any]]) -> list[dict[str, A
     for row in rows:
         platform = row.get("platform_name") or "Unknown"
         if platform not in platforms:
-            platforms[platform] = {"spend": 0.0, "clicks": 0.0, "impressions": 0.0}
+            platforms[platform] = {
+                "spend": 0.0, "clicks": 0.0, "impressions": 0.0,
+                "revenue": 0.0, "revenue_present": False,
+            }
         p = platforms[platform]
         p["spend"] += _safe_float(row.get("spend"))
         p["clicks"] += _safe_float(row.get("clicks"))
         p["impressions"] += _safe_float(row.get("impressions"))
+        revenue = _row_revenue(row)
+        if revenue is not None:
+            p["revenue"] += revenue
+            p["revenue_present"] = True
 
     result = []
     for platform, totals in sorted(platforms.items(), key=lambda x: x[1]["spend"], reverse=True):
         spend = totals["spend"]
         clicks = totals["clicks"]
         impressions = totals["impressions"]
+        revenue_present = totals["revenue_present"]
         result.append({
             "platform": platform,
             "spend": round(spend, 2),
-            "clicks": int(clicks),
-            "impressions": int(impressions),
+            "clicks": round(clicks),
+            "impressions": round(impressions),
             "cpc": round(spend / clicks, 2) if clicks > 0 else None,
             "cpm": round((spend / impressions) * 1000, 2) if impressions > 0 else None,
             "ctr": round((clicks / impressions) * 100, 2) if impressions > 0 else None,
+            "roas": round(totals["revenue"] / spend, 2) if (revenue_present and spend > 0) else None,
             "spend_share": None,
         })
 

@@ -99,6 +99,15 @@ def build_data_export_payload(
     period_starting_at, _ = _date_to_day_bounds(date_start)
     _, period_ending_at = _date_to_day_bounds(date_end)
 
+    # Day-bound strings are fixed-width ISO timestamps, so a lexicographic
+    # compare is also a chronological one. Reject reversed ranges up front rather
+    # than letting Northbeam return an empty export that looks like "no spend".
+    if period_ending_at < period_starting_at:
+        raise ValueError(
+            f"date_end ({date_end}) is before date_start ({date_start}); "
+            "provide a date range where the end is on or after the start."
+        )
+
     normalized_breakdowns: list[dict[str, Any]] = []
     for breakdown in breakdowns:
         key = normalize_breakdown_key(breakdown)
@@ -137,15 +146,26 @@ def extract_export_id(create_result: dict[str, Any]) -> str | None:
     return str(export_id) if export_id else None
 
 
+def _as_http_url(candidate: Any) -> str | None:
+    """Return the candidate as a string only if it is an http(s) URL, else None.
+    Guards against feeding a status string, error object, or relative path into
+    the CSV download step."""
+    if not candidate:
+        return None
+    text = str(candidate)
+    return text if text.startswith(("http://", "https://")) else None
+
+
 def extract_download_url(poll_result: dict[str, Any]) -> str | None:
-    if poll_result.get("download_url"):
-        return str(poll_result["download_url"])
+    url = _as_http_url(poll_result.get("download_url"))
+    if url:
+        return url
 
     result = poll_result.get("result")
     if isinstance(result, list) and result:
-        return str(result[0])
+        return _as_http_url(result[0])
     if isinstance(result, str):
-        return result
+        return _as_http_url(result)
     return None
 
 

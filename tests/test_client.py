@@ -115,6 +115,33 @@ async def test_list_spend_fetch_all_paginates(config, sample_spend_record):
     assert len(result["data"]) == 2
     assert result["pages_fetched"] == 2
     assert result["total_count"] == 2
+    # total_pages (2) does not exceed the 50-page cap -> not capped.
+    assert result["capped"] is False
+
+
+async def test_list_spend_fetch_all_flags_capped_when_pages_exceed_limit(
+    config, sample_spend_record
+):
+    # total_pages exceeds the internal 50-page cap, so fetch_all stops early and
+    # must report capped=True even though every fetched page returned data.
+    page = {
+        "data": [sample_spend_record],
+        "page": 1,
+        "page_size": 1,
+        "total_pages": 60,
+        "total_count": 60,
+    }
+
+    with respx.mock:
+        respx.get("https://api.northbeam.io/v1/spend").mock(
+            return_value=httpx.Response(200, json=page)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.list_spend(date="2026-04-20", fetch_all=True)
+
+    assert result["pages_fetched"] == 50  # stopped at MAX_PAGES
+    assert result["capped"] is True
 
 
 async def test_list_spend_401_raises_auth_error(config):
@@ -306,12 +333,16 @@ async def test_200_with_non_json_body_raises_api_error(config):
     """A WAF or proxy may return 200 OK with HTML instead of JSON."""
     with respx.mock:
         respx.get("https://api.northbeam.io/v1/spend").mock(
-            return_value=httpx.Response(200, text="<html>OK</html>")
+            return_value=httpx.Response(200, text="<html>session=secret-cookie</html>")
         )
 
         async with NorthbeamClient(config) as client:
-            with pytest.raises(Exception, match="Invalid JSON response"):
+            with pytest.raises(Exception, match="Invalid JSON response") as exc_info:
                 await client.list_spend(date="2026-04-20")
+
+        # The raw body may carry sensitive content (cookies, tokens); it must not
+        # be echoed into the error message.
+        assert "secret-cookie" not in str(exc_info.value)
 
 
 async def test_list_export_options_returns_combined_metadata(config):
@@ -510,6 +541,26 @@ async def test_download_export_csv_parses_csv(config):
     assert result["data"][0]["platform"] == "Facebook"
     assert result["data"][0]["revenue"] == "1000.50"
     assert result["data"][1]["platform"] == "TikTok"
+
+
+async def test_download_export_csv_strips_utf8_bom(config):
+    # Signed-URL CSVs are commonly UTF-8 with a BOM; it must be stripped so the
+    # first header is "platform", not "﻿platform" (which breaks every
+    # column lookup downstream).
+    csv_bytes = "platform,revenue\nFacebook,1000.50\n".encode("utf-8-sig")
+
+    with respx.mock:
+        respx.get("https://storage.example.com/bom.csv").mock(
+            return_value=httpx.Response(200, content=csv_bytes)
+        )
+
+        async with NorthbeamClient(config) as client:
+            result = await client.download_export_csv(
+                "https://storage.example.com/bom.csv"
+            )
+
+    assert result["columns"] == ["platform", "revenue"]
+    assert result["data"][0]["platform"] == "Facebook"
 
 
 async def test_download_export_csv_returns_all_rows(config):

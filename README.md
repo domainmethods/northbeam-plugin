@@ -173,6 +173,18 @@ installed plugin copy, not necessarily from your project directory.
 Do not commit real credentials. `.env` is ignored; `.env.example` is the safe
 template to commit. `~/.codex/northbeam.env` lives outside the repository.
 
+### Advanced Environment Variables
+
+These are optional and rarely needed; sensible defaults apply.
+
+- `NORTHBEAM_CREDENTIALS_FILE` — absolute path to a credentials file to load
+  before the built-in search locations (`.env`, `$PWD/.env`,
+  `~/.codex/northbeam.env`, `~/.northbeam/env`). Use this to point the plugin at
+  a credentials file kept outside the project tree.
+- `NORTHBEAM_EXPORT_TIMEOUT` — seconds to wait for a Data Export job to finish
+  before giving up (default `180`). Raise it for very large date ranges or
+  high-cardinality breakdowns that take longer to generate.
+
 ### Verify Connection
 
 In Codex, run:

@@ -311,7 +311,7 @@ wheels = [
 [[package]]
 name = "northbeam-plugin"
 version = "1.0.1"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "mcp" },

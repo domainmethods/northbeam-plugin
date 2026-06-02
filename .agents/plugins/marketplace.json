@@ -1,0 +1,20 @@
+{
+  "name": "northbeam-plugin",
+  "interface": {
+    "displayName": "Northbeam"
+  },
+  "plugins": [
+    {
+      "name": "northbeam",
+      "source": {
+        "source": "local",
+        "path": "./northbeam"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

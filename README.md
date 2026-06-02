@@ -133,80 +133,36 @@ Everything below is for Codex users and for people developing or maintaining the
 
 ### Using it in Codex
 
-Codex doesn't have Claude Code's credential prompt, so it takes a little more setup.
+Codex installs the plugin from the same GitHub repo, but it doesn't have Claude Code's credential prompt, so you save your keys with one extra command.
 
-#### 1. Install via a local personal marketplace
-
-Use this when installing this checkout directly.
-
-Sync a clean plugin copy into your personal plugin directory:
+#### 1. Install the plugin
 
 ```bash
-mkdir -p ~/plugins ~/.agents/plugins
-rsync -a --delete \
-  --include='.env.example' \
-  --exclude='.git/' \
-  --exclude='.env*' \
-  --exclude='.venv/' \
-  --exclude='.pytest_cache/' \
-  --exclude='__pycache__/' \
-  --exclude='*.pyc' \
-  --exclude='.spec-workflow/' \
-  --exclude='docs/' \
-  ./ ~/plugins/northbeam/
+codex plugin marketplace add domainmethods/northbeam-plugin
+codex plugin add northbeam@northbeam-plugin
 ```
 
-Re-run that `rsync` after any local edits and before reinstalling. Do **not** point the marketplace at a working tree containing real `.env` credentials — Codex copies local plugin files into its plugin cache.
-
-Add the plugin to `~/.agents/plugins/marketplace.json` (if the file already has plugins, add the `northbeam` object to the existing `plugins` array instead of replacing the file):
-
-```json
-{
-  "name": "personal",
-  "interface": {
-    "displayName": "Personal"
-  },
-  "plugins": [
-    {
-      "name": "northbeam",
-      "source": {
-        "source": "local",
-        "path": "./plugins/northbeam"
-      },
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
-      "category": "Productivity"
-    }
-  ]
-}
-```
-
-Codex discovers this personal marketplace automatically — no `codex plugin marketplace add` needed. Then install and confirm:
+Confirm it loaded, then start a new Codex thread so it picks up the plugin's skills and MCP tools:
 
 ```bash
-codex plugin add northbeam@personal
 codex plugin list
 ```
 
-Start a new Codex thread so it loads the plugin's skills and MCP tools.
+#### 2. Save your credentials
 
-#### 2. Credentials
-
-The recommended Codex path is a small local credential file:
+Run the credential helper. It needs no local checkout — `uvx` fetches and runs it straight from the repo:
 
 ```bash
-uv run python -m server.setup_credentials
+uvx --from "git+https://github.com/domainmethods/northbeam-plugin#subdirectory=northbeam" northbeam-setup
 ```
 
-If you already have a project `.env`, import it:
+It prompts for your API Key and Client ID (input is hidden) and writes `~/.codex/northbeam.env` with user-only permissions — your keys never pass through the Codex chat. If you already have a project `.env`, import it instead:
 
 ```bash
-uv run python -m server.setup_credentials --from-dotenv .env
+uvx --from "git+https://github.com/domainmethods/northbeam-plugin#subdirectory=northbeam" northbeam-setup --from-dotenv .env
 ```
 
-This writes `~/.codex/northbeam.env` with user-only permissions. Restart Codex or open a new thread afterward.
+Restart Codex or open a new thread afterward, then run `/northbeam:setup` to confirm the connection.
 
 Advanced alternative — export the variables before launching Codex:
 
@@ -243,13 +199,29 @@ Tools exposed when the plugin is active:
 | `northbeam_portfolio_health` | Build a spend-efficiency + outcome snapshot from one combined Data Export |
 | `northbeam_check_connection` | Validate Uploaded Spend API access, Data Export metadata, and a small revAttributed probe |
 
+### Repo layout
+
+The installable plugin lives in the [`northbeam/`](northbeam/) subdirectory (this is what both marketplaces point at, and what `uvx --from "git+...#subdirectory=northbeam"` builds). The repo root holds the two marketplace manifests (`.claude-plugin/marketplace.json` for Claude Code, `.agents/plugins/marketplace.json` for Codex), this README, and `docs/`. Run all development commands from inside `northbeam/`.
+
+### Testing local changes in Codex
+
+Point Codex at your working tree instead of GitHub — it reads the root `.agents/plugins/marketplace.json`, which resolves the plugin from `./northbeam`:
+
+```bash
+codex plugin marketplace add /absolute/path/to/northbeam-plugin
+codex plugin add northbeam@northbeam-plugin
+codex plugin list
+```
+
+Re-run `codex plugin add` after edits, and start a new Codex thread to reload. Codex copies the plugin into its cache, so never keep real `.env` credentials inside `northbeam/`.
+
 ### Development checks
 
 Run the validator and tests before publishing or reinstalling a changed plugin:
 
 ```bash
-python3 ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py .
-uv run pytest
+python3 ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py northbeam
+cd northbeam && uv run --extra dev pytest
 ```
 
 ### Developer troubleshooting
@@ -257,10 +229,10 @@ uv run pytest
 - **MCP server won't start** — confirm the server imports cleanly:
 
   ```bash
-  uv run python -c "import server.northbeam_mcp; print('ok')"
+  cd northbeam && uv run python -c "import server.northbeam_mcp; print('ok')"
   ```
 
-- **Codex plugin not loading** — check `codex plugin list`, reinstall with `codex plugin add northbeam@personal` after editing `.codex-plugin/plugin.json`, and start a new Codex thread.
+- **Codex plugin not loading** — check `codex plugin list`, reinstall with `codex plugin add northbeam@northbeam-plugin` after editing `northbeam/.codex-plugin/plugin.json`, and start a new Codex thread.
 
 ---
 

@@ -40,19 +40,19 @@ needs attention.
 
    **Claude Code:** Tell them to open `/plugin`, reconfigure Northbeam, and paste the API Key and Client ID into the plugin prompts. `NORTHBEAM_API_ENV` should be `prod` unless they use UAT. Then tell them to run `/reload-plugins`.
 
-   **Codex:** Tell them to run the local setup helper from the plugin checkout:
+   **Codex:** Tell them to run the credential helper. It needs no local checkout — `uvx` fetches and runs it straight from the repo:
 
    ```bash
-   uv run python -m server.setup_credentials
+   uvx --from "git+https://github.com/domainmethods/northbeam-plugin#subdirectory=northbeam" northbeam-setup
    ```
 
-   If they already have a `.env` file, tell them to run:
+   It prompts for the API Key and Client ID (input is hidden) and writes `~/.codex/northbeam.env` with user-only file permissions. If they already have a `.env` file, tell them to import it instead:
 
    ```bash
-   uv run python -m server.setup_credentials --from-dotenv .env
+   uvx --from "git+https://github.com/domainmethods/northbeam-plugin#subdirectory=northbeam" northbeam-setup --from-dotenv .env
    ```
 
-   Explain that this writes `~/.codex/northbeam.env` with user-only file permissions. Avoid asking the user to paste API secrets into chat unless they explicitly choose that path.
+   Avoid asking the user to paste API secrets into chat — the helper reads them locally so the keys never pass through the Codex conversation.
 
 3. After they confirm the credentials are saved, tell them to restart the client or open a new thread for the changes to take effect, then re-run `/northbeam:setup`.
 

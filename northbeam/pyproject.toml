@@ -1,0 +1,34 @@
+[project]
+name = "northbeam-plugin"
+version = "1.0.1"
+description = "Claude Code plugin for Northbeam spend intelligence"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "respx>=0.22.0",
+]
+
+# Console entry point so Codex users can save credentials without a local
+# checkout. This package lives in the northbeam/ subdirectory, so the git URL
+# needs the #subdirectory fragment:
+#   uvx --from "git+https://github.com/domainmethods/northbeam-plugin#subdirectory=northbeam" northbeam-setup
+[project.scripts]
+northbeam-setup = "server.setup_credentials:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Ship only the runtime package; tests/, docs/, and config live outside the wheel.
+[tool.hatch.build.targets.wheel]
+packages = ["server"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

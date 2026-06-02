@@ -1,254 +1,238 @@
-# Northbeam Plugin for Codex and Claude Code
+# Northbeam for Claude Code & Codex
 
-Marketing analytics through the Northbeam API. The plugin sources ad spend and
-efficiency (impressions, clicks, CPC, CPM, CTR) and outcome metrics (revenue,
-ROAS, CAC, conversions) from Northbeam's Data Export API. The legacy Spend API
-(`GET /v1/spend`) is upload-only and used only for customer-uploaded,
-non-integrated spend.
+**Ask plain-English questions about your ad spend and get instant analysis — no spreadsheets, no SQL.**
 
-## Prerequisites
+This plugin connects Claude (or Codex) to your Northbeam account so you can ask things like *"How are we doing this month?"* or *"Which channels should I cut?"* and get a clear, data-backed answer drawn straight from your real numbers. It pulls spend, efficiency (clicks, CPC, CPM, CTR), and outcomes (revenue, ROAS, CAC, orders) and turns them into the kind of summary you'd otherwise spend an hour building by hand.
 
-- Codex with plugin support, or Claude Code with plugin support
-- [uv](https://docs.astral.sh/uv/) for Python dependency management
-- Northbeam API access: API Key and Client ID from **Settings > API Keys**
+---
 
-## What The Plugin Installs
+## What you can ask
 
-The plugin has two parts that work together:
+Once it's set up, just type questions in plain language:
 
-- Skills: `/northbeam:setup` and `/northbeam:analyze` tell the assistant how to
-  help with Northbeam.
-- MCP server: the local Python process that securely calls the Northbeam API
-  when a skill needs real data.
+- "How are we doing this month?"
+- "Which channels are over budget pace?"
+- "Compare ROAS by channel for last week vs. the week before."
+- "Find any spend anomalies in the last 14 days."
+- "Where should we double down, and where should we cut?"
+- "Show me Facebook CPC and CPM for the last 14 days."
 
-Non-technical users should install the plugin, save credentials once, then use
-plain-language requests like "Check portfolio health this month."
+You can also run the built-in commands directly:
 
-## Claude Code Installation
+```text
+/northbeam:setup                                  ← connect your account (run once)
+/northbeam:analyze Check portfolio health this month.
+```
 
-Claude Code has the cleanest credential flow because its plugin system prompts
-for plugin options when the plugin is enabled.
+---
 
-1. Add the marketplace:
+## What you'll need
+
+1. **A Northbeam account** with API access. Grab two values from the Northbeam dashboard under **Settings → API Keys**:
+   - your **API Key**
+   - your **Client ID**
+2. **`uv`** — a small, free tool that lets the plugin run its data connector. One-time install:
+
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+   (On Windows, or for other options, see the [uv install guide](https://docs.astral.sh/uv/).) You don't need to know how it works — the plugin uses it behind the scenes.
+
+That's it. No coding required.
+
+---
+
+## Get started (Claude Code)
+
+Claude Code is the easiest way in — it asks for your keys with a simple prompt and stores them securely for you. No files to edit.
+
+1. **Add the plugin marketplace:**
 
    ```text
    /plugin marketplace add domainmethods/northbeam-plugin
    ```
 
-2. Install the plugin:
+2. **Install the plugin:**
 
    ```text
    /plugin install northbeam@domainmethods/northbeam-plugin
    ```
 
-3. When Claude Code asks for plugin configuration, paste:
-   - `NORTHBEAM_API_KEY`
-   - `NORTHBEAM_CLIENT_ID`
-   - `NORTHBEAM_API_ENV` (`prod` unless you use UAT)
+3. **Paste your credentials** when Claude Code prompts you:
+   - `NORTHBEAM_API_KEY` — your API Key
+   - `NORTHBEAM_CLIENT_ID` — your Client ID
+   - `NORTHBEAM_API_ENV` — leave as `prod` (only change to `uat` if Northbeam told you to)
 
-4. Reload plugins if you installed from an already-open session:
+4. **Reload** if you installed mid-session:
 
    ```text
    /reload-plugins
    ```
 
-5. Run setup:
+5. **Connect your account** (run once):
 
    ```text
    /northbeam:setup
    ```
 
-Claude Code stores sensitive plugin values in its credential store. You should
-not need a `.env` file for the normal Claude Code path.
+6. **Ask your first question:**
 
-## Codex Installation
-
-### Local Personal Marketplace
-
-Use this path when developing or installing this checkout directly.
-
-1. Sync a clean plugin copy into your personal plugin directory.
-
-   ```bash
-   mkdir -p ~/plugins ~/.agents/plugins
-   rsync -a --delete \
-     --include='.env.example' \
-     --exclude='.git/' \
-     --exclude='.env*' \
-     --exclude='.venv/' \
-     --exclude='.pytest_cache/' \
-     --exclude='__pycache__/' \
-     --exclude='*.pyc' \
-     --exclude='.spec-workflow/' \
-     --exclude='docs/' \
-     ./ ~/plugins/northbeam/
+   ```text
+   /northbeam:analyze How are we doing this month?
    ```
 
-   Run the same `rsync` command again after local edits and before reinstalling.
-   Do not point the marketplace at a working tree that contains real `.env`
-   credentials; Codex copies local plugin files into its plugin cache.
+Your keys are kept in Claude Code's secure credential store — you won't need any `.env` file or config file for this path.
 
-2. Add the plugin to `~/.agents/plugins/marketplace.json`.
+> **Using Codex instead?** That path needs a couple of extra setup steps — see [Advanced / Developer Setup](#advanced--developer-setup) below.
 
-   If that file already has plugins, add the `northbeam` object to the existing
-   `plugins` array instead of replacing the file.
+---
 
-   ```json
-   {
-     "name": "personal",
-     "interface": {
-       "displayName": "Personal"
-     },
-     "plugins": [
-       {
-         "name": "northbeam",
-         "source": {
-           "source": "local",
-           "path": "./plugins/northbeam"
-         },
-         "policy": {
-           "installation": "AVAILABLE",
-           "authentication": "ON_INSTALL"
-         },
-         "category": "Productivity"
-       }
-     ]
-   }
-   ```
+## What it can do
 
-   Codex discovers this personal marketplace automatically. You do not need to
-   run `codex plugin marketplace add` for this default personal-marketplace
-   location.
+After setup, the assistant can:
 
-3. Install or reinstall the plugin:
+- **Answer spend questions** — totals, trends, and efficiency (CPC, CPM, CTR) by channel, campaign, or date range.
+- **Track outcomes** — revenue, ROAS, CAC, and orders, including attribution-model comparisons.
+- **Compare over time** — week-over-week, month-over-month, year-over-year, with the swings called out.
+- **Catch problems early** — stopped campaigns, efficiency spikes, revenue drops, and zero-spend days.
+- **Watch your budget** — pacing vs. your monthly targets (over-pacing / on-track / behind).
+- **Spot diminishing returns** — campaigns getting more expensive, plus efficient ones worth scaling.
+- **Give you a morning briefing** — a one-screen portfolio health snapshot.
 
-   ```bash
-   codex plugin add northbeam@personal
-   ```
+---
 
-4. Confirm it is installed and enabled:
+## Save your goals (optional, recommended)
 
-   ```bash
-   codex plugin list
-   ```
+When you run `/northbeam:setup`, you can also save a quick business profile — your monthly budgets, KPI targets, ROAS goal, and campaign naming convention. The assistant uses these to frame answers as *"vs. your $X target"* instead of just raw numbers, and it unlocks budget-pacing checks. It's stored locally at `~/.northbeam/profile.json`. You can skip it and add it later.
 
-5. Start a new Codex thread so Codex loads the plugin skills and MCP tools.
+---
 
-### Credentials
+## Troubleshooting
 
-The MCP server needs a Northbeam API Key and Client ID. Codex does not currently
-use Claude Code's plugin `userConfig` credential prompt, so the normal Codex
-path is a small local credential file in your Codex home directory.
+**"Authentication failed" / "Run /northbeam:setup"**
+Your keys are missing or wrong. Run `/northbeam:setup` to re-check, and confirm the values in the Northbeam dashboard under **Settings → API Keys**. In Claude Code you can also open `/plugin`, reconfigure Northbeam, then run `/reload-plugins`. Start a fresh chat after changing credentials.
 
-Recommended setup:
+**Zero uploaded spend, but you know you're spending**
+That's normal. If your ad accounts are connected to Northbeam directly, your real spend comes through the Data Export (which the plugin uses automatically) — the separate "uploaded spend" number is only for manually-uploaded, non-integrated channels and is expected to be `0`.
+
+**The plugin won't start / `uv` errors**
+Make sure `uv` installed correctly:
+
+```bash
+uv --version
+```
+
+If that prints a version and things still fail, see the developer notes below.
+
+---
+
+## Advanced / Developer Setup
+
+Everything below is for Codex users and for people developing or maintaining the plugin. Non-developers on Claude Code can stop reading at this line.
+
+### Using it in Codex
+
+Codex doesn't have Claude Code's credential prompt, so it takes a little more setup.
+
+#### 1. Install via a local personal marketplace
+
+Use this when installing this checkout directly.
+
+Sync a clean plugin copy into your personal plugin directory:
+
+```bash
+mkdir -p ~/plugins ~/.agents/plugins
+rsync -a --delete \
+  --include='.env.example' \
+  --exclude='.git/' \
+  --exclude='.env*' \
+  --exclude='.venv/' \
+  --exclude='.pytest_cache/' \
+  --exclude='__pycache__/' \
+  --exclude='*.pyc' \
+  --exclude='.spec-workflow/' \
+  --exclude='docs/' \
+  ./ ~/plugins/northbeam/
+```
+
+Re-run that `rsync` after any local edits and before reinstalling. Do **not** point the marketplace at a working tree containing real `.env` credentials — Codex copies local plugin files into its plugin cache.
+
+Add the plugin to `~/.agents/plugins/marketplace.json` (if the file already has plugins, add the `northbeam` object to the existing `plugins` array instead of replacing the file):
+
+```json
+{
+  "name": "personal",
+  "interface": {
+    "displayName": "Personal"
+  },
+  "plugins": [
+    {
+      "name": "northbeam",
+      "source": {
+        "source": "local",
+        "path": "./plugins/northbeam"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
+```
+
+Codex discovers this personal marketplace automatically — no `codex plugin marketplace add` needed. Then install and confirm:
+
+```bash
+codex plugin add northbeam@personal
+codex plugin list
+```
+
+Start a new Codex thread so it loads the plugin's skills and MCP tools.
+
+#### 2. Credentials
+
+The recommended Codex path is a small local credential file:
 
 ```bash
 uv run python -m server.setup_credentials
 ```
 
-If you already have a project `.env` file, copy it into the Codex credential
-file:
+If you already have a project `.env`, import it:
 
 ```bash
 uv run python -m server.setup_credentials --from-dotenv .env
 ```
 
-The helper writes `~/.codex/northbeam.env` with user-only file permissions.
-Restart Codex or open a new thread after saving credentials.
+This writes `~/.codex/northbeam.env` with user-only permissions. Restart Codex or open a new thread afterward.
 
-Advanced alternative: export the variables before starting Codex:
+Advanced alternative — export the variables before launching Codex:
 
 ```bash
 export NORTHBEAM_API_KEY="..."
 export NORTHBEAM_CLIENT_ID="..."
-export NORTHBEAM_API_ENV="prod"  # optional; use "uat" for UAT
+export NORTHBEAM_API_ENV="prod"   # optional; "uat" for UAT
 codex
 ```
 
-Existing real environment variables take precedence over credential files.
-Project `.env` files are supported for local development, but they are not the
-recommended Codex Desktop path because plugin MCP servers run from Codex's
-installed plugin copy, not necessarily from your project directory.
+Real environment variables take precedence over credential files. Project `.env` files work for local development but aren't the recommended Codex path, since plugin MCP servers run from Codex's installed plugin copy rather than your project directory. Never commit real credentials — `.env` is gitignored; `.env.example` is the safe template.
 
-Do not commit real credentials. `.env` is ignored; `.env.example` is the safe
-template to commit. `~/.codex/northbeam.env` lives outside the repository.
+#### 3. Advanced environment variables
 
-### Advanced Environment Variables
+Optional and rarely needed; sensible defaults apply.
 
-These are optional and rarely needed; sensible defaults apply.
+- `NORTHBEAM_CREDENTIALS_FILE` — absolute path to a credentials file loaded before the built-in search locations (`.env`, `$PWD/.env`, `~/.codex/northbeam.env`, `~/.northbeam/env`). Use it to keep credentials outside the project tree.
+- `NORTHBEAM_EXPORT_TIMEOUT` — seconds to wait for a Data Export job before giving up (default `180`). Raise it for very large date ranges or high-cardinality breakdowns.
 
-- `NORTHBEAM_CREDENTIALS_FILE` — absolute path to a credentials file to load
-  before the built-in search locations (`.env`, `$PWD/.env`,
-  `~/.codex/northbeam.env`, `~/.northbeam/env`). Use this to point the plugin at
-  a credentials file kept outside the project tree.
-- `NORTHBEAM_EXPORT_TIMEOUT` — seconds to wait for a Data Export job to finish
-  before giving up (default `180`). Raise it for very large date ranges or
-  high-cardinality breakdowns that take longer to generate.
+### How it works
 
-### Verify Connection
+The plugin has two parts: **skills** (`/northbeam:setup`, `/northbeam:analyze`) that tell the assistant how to help, and a local **MCP server** (a small Python process launched with `uv`) that securely calls the Northbeam API when a skill needs real data.
 
-In Codex, run:
+Spend and efficiency come from Northbeam's **Data Export API** (the source of truth for integrated accounts), not the legacy Spend API (`GET /v1/spend`), which is upload-only and used only for customer-uploaded, non-integrated spend.
 
-```text
-/northbeam:setup
-```
-
-The setup skill validates your credentials and can create a business context
-profile at `~/.northbeam/profile.json` for monthly budgets, KPI targets,
-ROAS goals, and campaign naming conventions.
-
-The setup check validates the Uploaded Spend API and the Data Export API. A zero
-uploaded-spend row count is normal for natively-integrated accounts — real ad
-spend comes from the Data Export API (the `northbeam_spend` tool), not the
-uploaded-spend endpoint.
-
-## Codex Usage
-
-After installation, use the Northbeam skills directly:
-
-```text
-/northbeam:setup
-/northbeam:analyze Check portfolio health for this month.
-/northbeam:analyze Which channels are over budget pace?
-/northbeam:analyze Compare ROAS by channel for last week vs the prior week.
-```
-
-You can also ask natural-language questions in a Codex thread after the plugin
-is loaded:
-
-```text
-Find spend anomalies this week.
-Show Facebook CPC and CPM for the last 14 days.
-Which campaigns should I watch for diminishing returns?
-Compare revenue and ROAS by channel for month to date.
-```
-
-## Skills
-
-### `/northbeam:setup`
-
-Checks the Northbeam API connection and optionally writes a business context
-profile for budget pacing and target-vs-actual analysis.
-
-### `/northbeam:analyze`
-
-Strategic marketing analysis. Capabilities include:
-
-- Ad hoc spend queries with derived metrics (CPC, CPM, CTR)
-- Outcome metrics through Data Export (revenue, ROAS, CAC, conversions)
-- Attribution model comparison across models
-- Period-over-period comparisons (WoW, MoM, YoY)
-- Anomaly detection for spend gaps, efficiency spikes, and revenue drops
-- Campaign naming intelligence
-- Diminishing returns detection
-- Budget allocation modeling
-- Portfolio health dashboards
-- Year-over-year seasonality context
-- DTC/ecommerce benchmark context
-
-## MCP Tools
-
-These tools are available when the plugin is active:
+Tools exposed when the plugin is active:
 
 | Tool | Description |
 |------|-------------|
@@ -259,58 +243,26 @@ These tools are available when the plugin is active:
 | `northbeam_portfolio_health` | Build a spend-efficiency + outcome snapshot from one combined Data Export |
 | `northbeam_check_connection` | Validate Uploaded Spend API access, Data Export metadata, and a small revAttributed probe |
 
-## Troubleshooting
+### Development checks
 
-### Credentials Not Working
-
-- Run `/northbeam:setup` to re-check your API key and client ID.
-- Verify the values in the Northbeam dashboard under **Settings > API Keys**.
-- In Claude Code, open `/plugin`, reconfigure Northbeam, then run
-  `/reload-plugins`.
-- In Codex, run `uv run python -m server.setup_credentials` from this checkout,
-  or copy an existing `.env` with
-  `uv run python -m server.setup_credentials --from-dotenv .env`.
-- Start a new thread after changing credentials.
-
-### MCP Server Will Not Start
-
-- Confirm `uv` is installed:
-
-  ```bash
-  uv --version
-  ```
-
-- Confirm the server imports from this checkout:
-
-  ```bash
-  uv run python -c "import server.northbeam_mcp; print('ok')"
-  ```
-
-### Codex Plugin Not Loading
-
-- Check plugin status:
-
-  ```bash
-  codex plugin list
-  ```
-
-- Reinstall after changing `.codex-plugin/plugin.json`:
-
-  ```bash
-  codex plugin add northbeam@personal
-  ```
-
-- Start a new Codex thread after reinstalling.
-
-## Development Checks
-
-Run the plugin validator and tests before publishing or reinstalling a changed
-plugin:
+Run the validator and tests before publishing or reinstalling a changed plugin:
 
 ```bash
 python3 ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py .
 uv run pytest
 ```
+
+### Developer troubleshooting
+
+- **MCP server won't start** — confirm the server imports cleanly:
+
+  ```bash
+  uv run python -c "import server.northbeam_mcp; print('ok')"
+  ```
+
+- **Codex plugin not loading** — check `codex plugin list`, reinstall with `codex plugin add northbeam@personal` after editing `.codex-plugin/plugin.json`, and start a new Codex thread.
+
+---
 
 ## License
 

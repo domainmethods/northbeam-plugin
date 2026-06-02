@@ -156,9 +156,10 @@ Answer free-form spend questions using `northbeam_spend`.
 | "Facebook" or "Meta" | Pass `platform_name="Facebook"` to filter server-side |
 | "by campaign" | Group results by `campaign_name` in your output |
 | "by channel" | Group results by `platform_name` in your output |
+| "by day" / "daily" / "trend over time" / "each day" | Pass `time_granularity="daily"` — each row gains a `date` (YYYY-MM-DD) |
 | "top 5" | Sort by spend descending, return first 5 |
 
-**Tip:** `northbeam_spend` accepts `platform_name` for server-side filtering (case-insensitive). Use it to avoid fetching irrelevant platforms.
+**Tip:** `northbeam_spend` accepts `platform_name` for server-side filtering (case-insensitive). Use it to avoid fetching irrelevant platforms. It also accepts `time_granularity` — `"total"` (default, one period-total row per group) or `"daily"` (one row per group per day, for time-series work).
 
 ### Large Result Summarization
 
@@ -214,7 +215,12 @@ Scan recent spend data for issues without being asked. Trigger this when the use
 
 ### Data Pull
 
-Fetch the last 14 days of spend data across all channels and campaigns.
+Fetch the last 14 days of spend across all channels and campaigns with
+`northbeam_spend(..., breakdown="campaign", time_granularity="daily")`. Daily
+granularity is required here: each row then carries a `date` (YYYY-MM-DD), so you
+can split the window into sub-periods and detect day-level patterns. (Without
+`time_granularity="daily"` the tool returns a single period-total row per
+campaign and the day-over-day comparisons below are impossible.)
 
 ### Anomaly Types to Scan For
 
@@ -287,11 +293,19 @@ Identify channels and campaigns where additional spend is becoming less efficien
 
 ### Data Pull
 
-Fetch 28 days of spend data. Compute weekly CPC and CPM for each campaign:
+Fetch 28 days of spend with `northbeam_spend(..., breakdown="campaign",
+time_granularity="daily")` — daily granularity is required so each campaign row
+carries a `date` you can bucket into weeks. Then compute weekly CPC and CPM for
+each campaign:
 - Week 1: days 22–28 (oldest)
 - Week 2: days 15–21
 - Week 3: days 8–14
 - Week 4: days 1–7 (most recent)
+
+Aggregate within each week from the daily rows: sum `spend`, `clicks`, and
+`impressions` across the week's days, then compute weekly CPC = spend / clicks
+and CPM = spend / impressions × 1000 (do not average the per-day CPC/CPM, which
+are ratios).
 
 ### Fatigue Severity
 

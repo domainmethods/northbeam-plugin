@@ -15,6 +15,7 @@ from server.data_export import (
     breakdown_column_candidates,
     build_breakdown_value_lookup,
     build_data_export_payload,
+    date_column_candidates,
     extract_download_url,
     extract_export_id,
     metric_column_candidates,
@@ -32,6 +33,11 @@ AUTH_ERROR_MSG = (
 )
 
 MAX_RESULT_ROWS = 200
+# Daily (per-day) spend results are intrinsically larger: a month of
+# campaign-level data is ~100+ campaigns x ~30 days. Cap generously so a typical
+# anomaly (14-day) or fatigue (28-day) pull is not silently truncated, while
+# still bounding the response. Callers should check `truncated`/`total_count`.
+MAX_DAILY_RESULT_ROWS = 5000
 ADDITIVE_EXPORT_METRICS = {
     "clicks",
     "conversion",
@@ -91,7 +97,8 @@ def _spend_rows_from_aggregated(
     summed per-raw-row `clicks` (each row's spend / ecpc) when present; otherwise
     they fall back to spend / aggregated-ecpc for single-row groups. When
     `campaign_key` is set (campaign-level exports), each row also carries
-    `campaign_name`."""
+    `campaign_name`. When the aggregated entry carries a `date` (daily
+    granularity), it is passed through so callers get a per-day time series."""
     rows: list[dict[str, Any]] = []
     for entry in aggregated:
         spend = _safe_float(entry.get("spend"))
@@ -109,6 +116,8 @@ def _spend_rows_from_aggregated(
             "impressions": impressions,
             "clicks": clicks,
         }
+        if "date" in entry:
+            row["date"] = entry.get("date")
         if campaign_key:
             row["campaign_name"] = entry.get(campaign_key) or "Unknown"
         rows.append(row)
@@ -385,6 +394,7 @@ async def _list_options(config: NorthbeamConfig | None = None) -> dict[str, Any]
 
 SPEND_EXPORT_METRICS = ["spend", "impressions", "ecpc"]
 _VALID_SPEND_BREAKDOWNS = ("platform", "campaign")
+_VALID_SPEND_GRANULARITIES = ("total", "daily")
 
 
 async def _spend_via_export(
@@ -395,6 +405,7 @@ async def _spend_via_export(
     breakdown: str = "platform",
     attribution_model: str = "northbeam_custom",
     attribution_window: str = "1",
+    time_granularity: str = "total",
 ) -> dict[str, Any]:
     """Source spend + efficiency (impressions, clicks, CPC, CPM, CTR) from the
     Data Export API, by platform (default) or by campaign. Spend is
@@ -404,12 +415,23 @@ async def _spend_via_export(
     a Northbeam breakdown dimension) with a Platform payload breakdown, then
     aggregates on platform + campaign_name so campaigns never collapse.
 
-    Results are capped at MAX_RESULT_ROWS rows; check `truncated` and narrow by
-    platform_name or date range if set."""
+    time_granularity="total" (default) returns one period-total row per group;
+    "daily" runs the export with export_aggregation="DATE" and returns one row
+    per group per day (each carrying a `date`), for time-series analysis
+    (anomalies, fatigue). Daily results use the larger MAX_DAILY_RESULT_ROWS cap.
+
+    Results are capped (MAX_RESULT_ROWS for totals, MAX_DAILY_RESULT_ROWS for
+    daily); check `truncated` and narrow by platform_name or date range if set."""
     breakdown = (breakdown or "platform").lower()
     if breakdown not in _VALID_SPEND_BREAKDOWNS:
         raise ToolError(
             f"Unsupported breakdown {breakdown!r}; use 'platform' or 'campaign'."
+        )
+    time_granularity = (time_granularity or "total").lower()
+    if time_granularity not in _VALID_SPEND_GRANULARITIES:
+        raise ToolError(
+            f"Unsupported time_granularity {time_granularity!r}; use 'total' or "
+            "'daily'."
         )
     if breakdown == "campaign":
         level = "campaign"
@@ -419,6 +441,15 @@ async def _spend_via_export(
         level = "platform"
         aggregation_breakdowns = ["platform"]
         campaign_key = None
+
+    if time_granularity == "daily":
+        export_aggregation = "DATE"
+        group_by_date = True
+        row_cap = MAX_DAILY_RESULT_ROWS
+    else:
+        export_aggregation = "BREAKDOWN"
+        group_by_date = False
+        row_cap = MAX_RESULT_ROWS
 
     try:
         if config is None:
@@ -433,11 +464,13 @@ async def _spend_via_export(
                 attribution_model=attribution_model,
                 attribution_window=attribution_window,
                 level=level,
+                export_aggregation=export_aggregation,
             )
             aggregated = await _run_export_pipeline(
                 client, body,
                 breakdowns=aggregation_breakdowns,
                 metrics=SPEND_EXPORT_METRICS,
+                group_by_date=group_by_date,
             )
 
         rows = _spend_rows_from_aggregated(aggregated, campaign_key=campaign_key)
@@ -446,9 +479,9 @@ async def _spend_via_export(
             rows = [r for r in rows if (r.get("platform_name") or "").lower() == needle]
 
         total_count = len(rows)
-        truncated = total_count > MAX_RESULT_ROWS
+        truncated = total_count > row_cap
         return {
-            "data": rows[:MAX_RESULT_ROWS],
+            "data": rows[:row_cap],
             "total_count": total_count,
             "truncated": truncated,
             "date_range": {"start": date_start, "end": date_end},
@@ -475,6 +508,7 @@ async def northbeam_spend(
     breakdown: str = "platform",
     attribution_model: str = "northbeam_custom",
     attribution_window: str = "1",
+    time_granularity: str = "total",
 ) -> dict[str, Any]:
     """Query ad spend and efficiency (spend, impressions, clicks, CPC, CPM, CTR)
     from the Northbeam Data Export API. This is the source of truth for spend on
@@ -483,9 +517,16 @@ async def northbeam_spend(
     Date format: YYYY-MM-DD. platform_name filters results (case-insensitive).
     breakdown="platform" (default) returns one row per platform; "campaign"
     returns one row per campaign (with platform_name + campaign_name) for
-    campaign-level analysis (anomalies, fatigue, naming intelligence). Defaults
-    match the account's UI default (Clicks only / 1-day / accrual); spend itself
-    is attribution-independent.
+    campaign-level analysis (anomalies, fatigue, naming intelligence).
+
+    time_granularity="total" (default) returns one period-total row per group;
+    "daily" returns one row per group per day, each with a `date` (YYYY-MM-DD),
+    for time-series analysis like anomaly detection and diminishing-returns/
+    fatigue trends. Combine breakdown="campaign" with time_granularity="daily"
+    for per-campaign daily series.
+
+    Defaults match the account's UI default (Clicks only / 1-day / accrual);
+    spend itself is attribution-independent.
     """
     return await _spend_via_export(
         date_start=date_start,
@@ -494,6 +535,7 @@ async def northbeam_spend(
         breakdown=breakdown,
         attribution_model=attribution_model,
         attribution_window=attribution_window,
+        time_granularity=time_granularity,
     )
 
 
@@ -546,12 +588,16 @@ def _aggregate_export_rows(
     metrics: list[str],
     accounting_mode: str | None = None,
     derive_clicks: bool = False,
+    group_by_date: bool = False,
 ) -> list[dict[str, Any]]:
     """Aggregate raw CSV rows by breakdown keys, after dropping fan-out
     duplicate accounting-mode rows. When `derive_clicks` is set (the spend and
     portfolio paths), a summed per-raw-row `clicks` field is attached; generic
     exports leave it off so the response contract stays exactly the requested
-    metrics."""
+    metrics. When `group_by_date` is set (daily granularity, the export is run
+    with export_aggregation="DATE"), the per-row `date` column is added to the
+    group key and emitted on each entry, so the same breakdown on different days
+    stays as separate rows forming a per-day time series."""
     rows = _select_accounting_partition(rows, accounting_mode)
     groups: dict[tuple, dict[str, Any]] = defaultdict(
         lambda: {"_count": 0}
@@ -564,10 +610,15 @@ def _aggregate_export_rows(
     derive_clicks = derive_clicks and "ecpc" in metrics and "spend" in metrics
 
     for row in rows:
-        key = tuple(
+        breakdown_key = tuple(
             _first_row_value(row, breakdown_column_candidates(b))
             for b in breakdowns
         )
+        if group_by_date:
+            date_value = _first_row_value(row, date_column_candidates(), default="")
+            key: tuple = (date_value, *breakdown_key)
+        else:
+            key = breakdown_key
         group = groups[key]
         group["_count"] += 1
         if derive_clicks:
@@ -590,7 +641,15 @@ def _aggregate_export_rows(
 
     aggregated: list[dict[str, Any]] = []
     for key, group in groups.items():
-        entry: dict[str, Any] = dict(zip(breakdowns, key))
+        if group_by_date:
+            date_value = key[0]
+            breakdown_values = key[1:]
+        else:
+            date_value = None
+            breakdown_values = key
+        entry: dict[str, Any] = dict(zip(breakdowns, breakdown_values))
+        if group_by_date:
+            entry["date"] = date_value
         for m in metrics:
             if _is_additive_export_metric(m):
                 entry[m] = round(group.get(m, 0.0), 2)
@@ -602,10 +661,20 @@ def _aggregate_export_rows(
         entry["_row_count"] = group["_count"]
         aggregated.append(entry)
 
-    aggregated.sort(
-        key=lambda r: _safe_float(r.get(metrics[0])) if metrics else 0,
-        reverse=True,
-    )
+    primary_metric = metrics[0] if metrics else None
+    if group_by_date:
+        # Chronological series, ties broken by the primary metric descending.
+        aggregated.sort(
+            key=lambda r: (
+                r.get("date") or "",
+                -(_safe_float(r.get(primary_metric)) if primary_metric else 0),
+            )
+        )
+    else:
+        aggregated.sort(
+            key=lambda r: _safe_float(r.get(primary_metric)) if primary_metric else 0,
+            reverse=True,
+        )
     return aggregated
 
 
@@ -619,6 +688,7 @@ async def _build_export_body(
     attribution_model: str,
     attribution_window: str,
     level: str = "platform",
+    export_aggregation: str = "BREAKDOWN",
 ) -> dict[str, Any]:
     try:
         breakdown_values = None
@@ -637,6 +707,7 @@ async def _build_export_body(
             attribution_window=attribution_window,
             breakdown_values=breakdown_values,
             level=level,
+            export_aggregation=export_aggregation,
         )
     except ValueError as e:
         raise ToolError(str(e)) from None
@@ -836,6 +907,7 @@ async def _run_export_pipeline(
     body: dict[str, Any],
     breakdowns: list[str] | None = None,
     metrics: list[str] | None = None,
+    group_by_date: bool = False,
 ) -> list[dict[str, Any]]:
     create_result = await client.create_data_export(body)
     export_id = extract_export_id(create_result)
@@ -881,6 +953,7 @@ async def _run_export_pipeline(
             effective_metrics,
             accounting_mode=accounting_mode,
             derive_clicks=True,
+            group_by_date=group_by_date,
         )
     return []
 

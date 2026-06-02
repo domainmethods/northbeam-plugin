@@ -7,6 +7,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from server.northbeam_mcp import (
     _list_spend, _check_connection, _list_options, _data_export,
     _aggregate_export_rows, _enrich_spend_rows, MAX_RESULT_ROWS,
+    MAX_DAILY_RESULT_ROWS,
     _spend_rows_from_aggregated, _compute_blended_metrics,
     _aggregate_spend_by_platform, _spend_via_export,
 )
@@ -1292,3 +1293,191 @@ def test_uploaded_spend_tool_is_exposed_and_documented():
     assert tool.__name__ == "northbeam_list_uploaded_spend"
     assert "upload" in (tool.__doc__ or "").lower()
     assert not hasattr(northbeam_mcp, "northbeam_list_spend")
+
+
+def test_max_daily_result_rows_exceeds_period_total_cap():
+    # A month of daily campaign rows (~100 campaigns x 30 days) far exceeds the
+    # 200-row period-total cap, so daily mode needs a much larger ceiling.
+    assert MAX_DAILY_RESULT_ROWS > MAX_RESULT_ROWS
+
+
+def test_aggregate_export_rows_groups_by_date_when_enabled():
+    # With group_by_date, the same platform on two different days must stay as two
+    # rows, each carrying its own `date`; without it the two days collapse.
+    rows = [
+        {"date": "2026-05-30", "breakdown_platform_northbeam": "Facebook Ads",
+         "spend": "100", "ecpc": "0.5"},
+        {"date": "2026-05-31", "breakdown_platform_northbeam": "Facebook Ads",
+         "spend": "200", "ecpc": "0.5"},
+    ]
+
+    collapsed = _aggregate_export_rows(rows, ["platform"], ["spend", "ecpc"])
+    assert len(collapsed) == 1
+    assert "date" not in collapsed[0]
+    assert collapsed[0]["spend"] == 300.0
+
+    by_day = _aggregate_export_rows(
+        rows, ["platform"], ["spend", "ecpc"], group_by_date=True
+    )
+    assert len(by_day) == 2
+    # sorted by date ascending
+    assert [r["date"] for r in by_day] == ["2026-05-30", "2026-05-31"]
+    assert by_day[0]["platform"] == "Facebook Ads"
+    assert by_day[0]["spend"] == 100.0
+    assert by_day[1]["spend"] == 200.0
+
+
+def test_aggregate_export_rows_groups_multiple_platforms_per_day():
+    # Within one day, distinct platforms stay separate; the same platform on the
+    # same day across two raw rows sums additively.
+    rows = [
+        {"date": "2026-05-31", "breakdown_platform_northbeam": "Facebook Ads",
+         "spend": "100", "ecpc": "0.5"},
+        {"date": "2026-05-31", "breakdown_platform_northbeam": "Facebook Ads",
+         "spend": "50", "ecpc": "0.25"},
+        {"date": "2026-05-31", "breakdown_platform_northbeam": "TikTok",
+         "spend": "30", "ecpc": "0.3"},
+    ]
+
+    by_day = _aggregate_export_rows(
+        rows, ["platform"], ["spend", "ecpc"], group_by_date=True, derive_clicks=True
+    )
+
+    assert len(by_day) == 2
+    fb = next(r for r in by_day if r["platform"] == "Facebook Ads")
+    assert fb["date"] == "2026-05-31"
+    assert fb["spend"] == 150.0
+    # clicks summed per raw row: 100/0.5 + 50/0.25 = 200 + 200
+    assert fb["clicks"] == 400.0
+
+
+async def test_spend_via_export_daily_emits_date_and_date_aggregation(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    csv_content = (
+        "date,breakdown_platform_northbeam,spend,imprs,ecpc\n"
+        "2026-05-30,Facebook Ads,100000,5000000,0.50\n"
+        "2026-05-31,Facebook Ads,50000,4000000,0.25\n"
+    )
+
+    with respx.mock:
+        _mock_export_options(sample_export_options)
+        post_route = respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        result = await _spend_via_export(
+            config=config,
+            date_start="2026-05-30",
+            date_end="2026-05-31",
+            time_granularity="daily",
+        )
+
+    sent = json.loads(post_route.calls[0].request.content)
+    assert sent["options"]["export_aggregation"] == "DATE"
+
+    assert result["total_count"] == 2
+    dates = [r["date"] for r in result["data"]]
+    assert dates == ["2026-05-30", "2026-05-31"]
+    day1 = next(r for r in result["data"] if r["date"] == "2026-05-30")
+    assert day1["platform_name"] == "Facebook Ads"
+    assert day1["spend"] == 100000.0
+    assert day1["clicks"] == 200000.0  # 100000 / 0.50
+
+
+async def test_spend_via_export_total_uses_breakdown_aggregation_and_no_date(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    csv_content = (
+        "breakdown_platform_northbeam,spend,imprs,ecpc\n"
+        "Facebook Ads,407056.74,10000000,0.50\n"
+    )
+
+    with respx.mock:
+        _mock_export_options(sample_export_options)
+        post_route = respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=csv_content)
+        )
+
+        result = await _spend_via_export(
+            config=config,
+            date_start="2026-05-01",
+            date_end="2026-05-31",
+        )
+
+    sent = json.loads(post_route.calls[0].request.content)
+    assert sent["options"]["export_aggregation"] == "BREAKDOWN"
+    assert "date" not in result["data"][0]
+
+
+async def test_spend_via_export_daily_does_not_truncate_above_period_cap(
+    config,
+    sample_export_options,
+    sample_export_create_response,
+    sample_export_completed_response,
+    monkeypatch,
+):
+    # 250 daily rows exceed the 200-row period-total cap but must survive under
+    # the daily cap.
+    monkeypatch.setattr(client_module, "EXPORT_POLL_INTERVAL", 0.01)
+    header = "date,breakdown_platform_northbeam,spend,imprs,ecpc\n"
+    body_rows = "".join(
+        f"2026-{1 + i // 28:02d}-{1 + i % 28:02d},Facebook Ads,{100 + i},1000,0.5\n"
+        for i in range(250)
+    )
+
+    with respx.mock:
+        _mock_export_options(sample_export_options)
+        respx.post("https://api.northbeam.io/v1/exports/data-export").mock(
+            return_value=httpx.Response(201, json=sample_export_create_response)
+        )
+        respx.get("https://api.northbeam.io/v1/exports/data-export/result/exp-test-123").mock(
+            return_value=httpx.Response(200, json=sample_export_completed_response)
+        )
+        respx.get("https://storage.example.com/export.csv").mock(
+            return_value=httpx.Response(200, text=header + body_rows)
+        )
+
+        result = await _spend_via_export(
+            config=config,
+            date_start="2026-01-01",
+            date_end="2026-09-28",
+            time_granularity="daily",
+        )
+
+    # 250 distinct (date) groups, all retained, not truncated at 200.
+    assert result["total_count"] == 250
+    assert result["truncated"] is False
+    assert len(result["data"]) == 250
+
+
+async def test_spend_via_export_rejects_unknown_granularity(config):
+    with pytest.raises(ToolError, match="granularity"):
+        await _spend_via_export(
+            config=config,
+            date_start="2026-05-01",
+            date_end="2026-05-31",
+            time_granularity="hourly",
+        )

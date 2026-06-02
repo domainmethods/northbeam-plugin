@@ -4,6 +4,7 @@ from server.data_export import (
     build_breakdown_value_lookup,
     build_data_export_payload,
     breakdown_column_candidates,
+    date_column_candidates,
     extract_download_url,
     extract_export_id,
     metric_column_candidates,
@@ -150,3 +151,36 @@ def test_partition_column_candidates_for_accounting_mode():
 
 def test_partition_column_candidates_unknown_returns_self():
     assert partition_column_candidates("nonexistent") == ["nonexistent"]
+
+
+def test_build_data_export_payload_defaults_to_breakdown_aggregation():
+    payload = build_data_export_payload(
+        date_start="2026-05-31",
+        date_end="2026-05-31",
+        metrics=["spend"],
+        breakdowns=[],
+    )
+
+    assert payload["options"]["export_aggregation"] == "BREAKDOWN"
+
+
+def test_build_data_export_payload_accepts_date_aggregation():
+    # export_aggregation="DATE" is the live-verified lever that makes the CSV
+    # break out one row per day (adding a `date` column); "BREAKDOWN" collapses
+    # the whole period per breakdown. These are the only two values the API
+    # permits.
+    payload = build_data_export_payload(
+        date_start="2026-05-30",
+        date_end="2026-05-31",
+        metrics=["spend"],
+        breakdowns=[],
+        export_aggregation="DATE",
+    )
+
+    assert payload["options"]["export_aggregation"] == "DATE"
+
+
+def test_date_column_candidates_returns_live_csv_name():
+    # Live-verified 2026-06-01: a DATE-aggregated export names the per-day column
+    # exactly `date` (values formatted YYYY-MM-DD).
+    assert date_column_candidates() == ["date"]

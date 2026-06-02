@@ -38,6 +38,11 @@ PARTITION_COLUMN_ALIASES = {
     ],
 }
 
+# With export_aggregation="DATE" the CSV breaks out one row per day and carries a
+# per-row date column named exactly `date` (values formatted YYYY-MM-DD).
+# Live-verified 2026-06-01 against a platform-level spend export.
+DATE_COLUMN_CANDIDATES = ["date"]
+
 DEFAULT_EXPORT_OPTIONS = {
     "export_aggregation": "BREAKDOWN",
     "remove_zero_spend": False,
@@ -89,6 +94,7 @@ def build_data_export_payload(
     level: str = "platform",
     time_granularity: str = "DAILY",
     accounting_mode: str = "accrual",
+    export_aggregation: str = "BREAKDOWN",
 ) -> dict[str, Any]:
     period_starting_at, _ = _date_to_day_bounds(date_start)
     _, period_ending_at = _date_to_day_bounds(date_end)
@@ -101,6 +107,12 @@ def build_data_export_payload(
             raise ValueError(f"Breakdown values required for {key}")
         normalized_breakdowns.append({"key": key, "values": values})
 
+    # export_aggregation toggles date breakout: "BREAKDOWN" (default) collapses
+    # the whole period per breakdown; "DATE" emits one row per day with a `date`
+    # column. The API permits only these two values.
+    options = dict(DEFAULT_EXPORT_OPTIONS)
+    options["export_aggregation"] = export_aggregation
+
     return {
         "level": level,
         "time_granularity": time_granularity,
@@ -110,7 +122,7 @@ def build_data_export_payload(
             "period_ending_at": period_ending_at,
         },
         "breakdowns": normalized_breakdowns,
-        "options": dict(DEFAULT_EXPORT_OPTIONS),
+        "options": options,
         "attribution_options": {
             "attribution_models": [attribution_model],
             "accounting_modes": [accounting_mode],
@@ -160,3 +172,7 @@ def breakdown_column_candidates(breakdown: str) -> list[str]:
         key,
         *BREAKDOWN_COLUMN_ALIASES.get(key, []),
     ])
+
+
+def date_column_candidates() -> list[str]:
+    return _dedupe(DATE_COLUMN_CANDIDATES)

@@ -1,7 +1,7 @@
 ---
 name: setup
 description: Check Northbeam API credentials, configure connection, and set up business context profile. Use when first connecting to Northbeam or troubleshooting authentication issues.
-allowed-tools: mcp__northbeam__northbeam_check_connection, mcp__northbeam__northbeam_list_spend, Read, Write
+allowed-tools: mcp__northbeam__northbeam_check_connection, mcp__northbeam__northbeam_spend, mcp__northbeam__northbeam_list_uploaded_spend, Read, Write
 user-invocable: true
 disable-model-invocation: false
 ---
@@ -16,14 +16,13 @@ Call the `northbeam_check_connection` tool.
 
 **If connected:** Report the environment and summarize each checked surface:
 
-- Spend API status and spend row count for yesterday
+- Uploaded Spend API status and uploaded-spend row count for yesterday
 - Data Export metadata status
-- Data Export API status with transactions and revenue for yesterday
+- Data Export API status with transactions and revenue (revAttributed) for yesterday
 
-Make clear that spend rows are ad spend records, not orders. If spend rows are
-0 but Data Export returns transactions or revenue, explain that this means
-outcome data exists even though no ad spend rows were returned for that date.
-Skip to Step 3 (business context profile).
+A zero uploaded-spend count is normal for natively-integrated accounts — real ad
+spend comes from the Data Export API (the `northbeam_spend` tool), not the
+uploaded-spend endpoint. Skip to Step 3 (business context profile).
 
 **If partially connected:** Explain which surface failed. If Spend API works
 but Data Export fails, do not tell the user to re-enter credentials unless the
@@ -61,13 +60,12 @@ needs attention.
 
 Once credentials are set, call `northbeam_check_connection` again. Confirm:
 - The environment shown (prod or uat)
-- Spend API status and spend row count
+- Uploaded Spend API status and uploaded-spend row count
 - Data Export metadata status
-- Data Export API transactions and revenue status
+- Data Export API transactions and revenue (revAttributed) status
 
-Make clear that spend rows are ad spend records, not orders. If spend rows are
-0 but Data Export returns transactions or revenue, explain that this means
-outcome data exists even though no ad spend rows were returned for that date.
+A zero uploaded-spend count is normal for natively-integrated accounts — real ad
+spend comes from the Data Export API (`northbeam_spend`).
 
 If the check is partially connected, explain which surface failed. If Spend API
 works but Data Export fails, do not tell the user to re-enter credentials unless

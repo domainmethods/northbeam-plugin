@@ -7,6 +7,7 @@ from server.data_export import (
     extract_download_url,
     extract_export_id,
     metric_column_candidates,
+    partition_column_candidates,
 )
 
 
@@ -118,3 +119,34 @@ def test_metric_and_breakdown_column_candidates_cover_live_csv_names():
         "Platform (Northbeam)",
         "breakdown_platform_northbeam",
     ]
+
+
+def test_build_data_export_payload_uses_ui_defaults():
+    payload = build_data_export_payload(
+        date_start="2026-05-31",
+        date_end="2026-05-31",
+        metrics=["revAttributed"],
+        breakdowns=[],
+    )
+
+    assert payload["attribution_options"] == {
+        "attribution_models": ["northbeam_custom"],
+        "accounting_modes": ["accrual"],
+        "attribution_windows": ["1"],
+    }
+
+
+def test_metric_column_candidates_maps_impressions_to_imprs():
+    assert metric_column_candidates("impressions") == ["impressions", "imprs"]
+
+
+def test_partition_column_candidates_for_accounting_mode():
+    assert partition_column_candidates("accounting_mode") == [
+        "accounting_mode",
+        "Accounting Mode",
+        "accounting_mode_northbeam",
+    ]
+
+
+def test_partition_column_candidates_unknown_returns_self():
+    assert partition_column_candidates("nonexistent") == ["nonexistent"]

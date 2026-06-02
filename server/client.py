@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -13,7 +14,18 @@ from server.config import NorthbeamConfig
 MAX_RETRIES = 3
 INITIAL_BACKOFF = 0.5
 EXPORT_POLL_INTERVAL = 2.0
-EXPORT_POLL_TIMEOUT = 60.0
+
+
+def _resolve_poll_timeout() -> float:
+    """Read the export poll timeout (seconds) from the environment.
+
+    Factored out so tests can verify env handling without reloading the module
+    (reloading rebinds this module's exception classes and breaks isinstance
+    checks in already-imported callers)."""
+    return float(os.environ.get("NORTHBEAM_EXPORT_TIMEOUT", "180.0"))
+
+
+EXPORT_POLL_TIMEOUT = _resolve_poll_timeout()
 DOWNLOAD_TIMEOUT = 60.0
 EXPORT_SUCCESS_STATUSES = {"COMPLETED", "SUCCESS"}
 EXPORT_FAILURE_STATUSES = {"FAILED", "FAILURE"}
@@ -138,6 +150,7 @@ class NorthbeamClient:
         )
 
     async def poll_export_result(self, export_id: str) -> dict[str, Any]:
+        last_status = "PENDING"
         try:
             async with asyncio.timeout(EXPORT_POLL_TIMEOUT):
                 while True:
@@ -145,6 +158,8 @@ class NorthbeamClient:
                         "GET", f"exports/data-export/result/{export_id}"
                     )
                     status = _normalize_export_status(result.get("status"))
+                    if status:
+                        last_status = status
                     if status in EXPORT_SUCCESS_STATUSES:
                         return result
                     if status in EXPORT_FAILURE_STATUSES:
@@ -155,7 +170,9 @@ class NorthbeamClient:
                     await asyncio.sleep(EXPORT_POLL_INTERVAL)
         except TimeoutError as e:
             raise NorthbeamAPIError(
-                f"Export {export_id} timed out after {EXPORT_POLL_TIMEOUT}s"
+                f"Export {export_id} did not finish within "
+                f"{EXPORT_POLL_TIMEOUT:.0f}s (last status: {last_status}). "
+                "Northbeam's export queue may be busy — retry shortly."
             ) from e
 
     async def download_export_csv(

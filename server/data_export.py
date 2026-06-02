@@ -17,6 +17,25 @@ BREAKDOWN_COLUMN_ALIASES = {
 
 METRIC_COLUMN_ALIASES = {
     "txns": ["transactions"],
+    "impressions": ["imprs"],
+    # The export returns attributed revenue in a column named `attributed_rev`
+    # even though the requested metric id is `revAttributed` (same metric-id vs
+    # CSV-column mismatch as imprs/impressions). Live-confirmed against a
+    # platform-level export (see the live-verification task in the plan).
+    "revAttributed": ["attributed_rev"],
+}
+
+# The Data Export API returns one row per accounting mode when a revenue metric
+# is requested ("Accrual performance" + "Cash snapshot"). These are the CSV
+# column-name candidates that carry the accounting mode, used to drop the
+# duplicate rows before aggregation. Confirm/extend the exact name against a
+# live export (see the live-verification task in the plan).
+PARTITION_COLUMN_ALIASES = {
+    "accounting_mode": [
+        "accounting_mode",
+        "Accounting Mode",
+        "accounting_mode_northbeam",
+    ],
 }
 
 DEFAULT_EXPORT_OPTIONS = {
@@ -64,8 +83,8 @@ def build_data_export_payload(
     date_end: str,
     metrics: list[str],
     breakdowns: list[str],
-    attribution_model: str = "northbeam_custom__va",
-    attribution_window: str = "7",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
     breakdown_values: dict[str, list[str]] | None = None,
     level: str = "platform",
     time_granularity: str = "DAILY",
@@ -128,6 +147,10 @@ def _dedupe(values: list[str]) -> list[str]:
 
 def metric_column_candidates(metric_id: str) -> list[str]:
     return _dedupe([metric_id, *METRIC_COLUMN_ALIASES.get(metric_id, [])])
+
+
+def partition_column_candidates(name: str) -> list[str]:
+    return _dedupe([name, *PARTITION_COLUMN_ALIASES.get(name, [])])
 
 
 def breakdown_column_candidates(breakdown: str) -> list[str]:

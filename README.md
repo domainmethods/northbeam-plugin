@@ -1,8 +1,10 @@
 # Northbeam Plugin for Codex and Claude Code
 
-Marketing analytics through the Northbeam API. The plugin covers spend data
-(impressions, clicks, CPC, CPM, CTR) and outcome metrics (revenue, ROAS, CAC,
-conversions) through Northbeam's Spend and Data Export APIs.
+Marketing analytics through the Northbeam API. The plugin sources ad spend and
+efficiency (impressions, clicks, CPC, CPM, CTR) and outcome metrics (revenue,
+ROAS, CAC, conversions) from Northbeam's Data Export API. The legacy Spend API
+(`GET /v1/spend`) is upload-only and used only for customer-uploaded,
+non-integrated spend.
 
 ## Prerequisites
 
@@ -183,9 +185,10 @@ The setup skill validates your credentials and can create a business context
 profile at `~/.northbeam/profile.json` for monthly budgets, KPI targets,
 ROAS goals, and campaign naming conventions.
 
-The setup check validates both the Spend API and Data Export API. A zero spend
-row count means Northbeam returned no ad spend records for the checked day; it
-does not mean orders or transactions are missing.
+The setup check validates the Uploaded Spend API and the Data Export API. A zero
+uploaded-spend row count is normal for natively-integrated accounts — real ad
+spend comes from the Data Export API (the `northbeam_spend` tool), not the
+uploaded-spend endpoint.
 
 ## Codex Usage
 
@@ -237,11 +240,12 @@ These tools are available when the plugin is active:
 
 | Tool | Description |
 |------|-------------|
-| `northbeam_list_spend` | Query spend records with filters for date, platform, campaign, ad, and pagination |
-| `northbeam_data_export` | Run async data exports for outcome metrics such as revenue, ROAS, CAC, and conversions |
+| `northbeam_spend` | Platform-level ad spend + efficiency (CPC, CPM, CTR) from the Data Export API — the source of truth for spend on integrated accounts |
+| `northbeam_list_uploaded_spend` | Query customer-uploaded spend (non-integrated channels) from the Spend API; empty for integrated accounts |
+| `northbeam_data_export` | Run async data exports for outcomes such as revAttributed, ROAS, CAC, and conversions |
 | `northbeam_list_options` | Discover available breakdowns, metrics, and attribution models |
-| `northbeam_portfolio_health` | Build a holistic spend-efficiency and outcome-metric snapshot in one concurrent call |
-| `northbeam_check_connection` | Validate Spend API access, Data Export metadata, and a tiny transactions/revenue export |
+| `northbeam_portfolio_health` | Build a spend-efficiency + outcome snapshot from one combined Data Export |
+| `northbeam_check_connection` | Validate Uploaded Spend API access, Data Export metadata, and a small revAttributed probe |
 
 ## Troubleshooting
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import sys
 from collections import defaultdict
@@ -19,6 +18,7 @@ from server.data_export import (
     extract_download_url,
     extract_export_id,
     metric_column_candidates,
+    partition_column_candidates,
 )
 
 logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
@@ -41,6 +41,7 @@ ADDITIVE_EXPORT_METRICS = {
     "orders",
     "revenue",
     "rev",
+    "revattributed",
     "spend",
     "transactions",
     "txns",
@@ -76,6 +77,42 @@ def _enrich_spend_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row["ctr"] = round((clicks / impressions) * 100, 2) if impressions > 0 else None
 
     return rows
+
+
+def _spend_rows_from_aggregated(
+    aggregated: list[dict[str, Any]],
+    breakdown_key: str = "platform",
+    campaign_key: str | None = None,
+) -> list[dict[str, Any]]:
+    """Convert aggregated Data Export rows into the legacy spend-row shape
+    (`platform_name`, optionally `campaign_name`, `spend`, `impressions`,
+    `clicks`) that the analyze capabilities consume. Impressions come from the
+    `imprs`-backed `impressions` metric. Clicks come from the aggregator's
+    summed per-raw-row `clicks` (each row's spend / ecpc) when present; otherwise
+    they fall back to spend / aggregated-ecpc for single-row groups. When
+    `campaign_key` is set (campaign-level exports), each row also carries
+    `campaign_name`."""
+    rows: list[dict[str, Any]] = []
+    for entry in aggregated:
+        spend = _safe_float(entry.get("spend"))
+        impressions = _safe_float(entry.get("impressions"))
+        if "clicks" in entry:
+            # Aggregator summed per-raw-row clicks (spend/ecpc); use directly,
+            # since an aggregated ecpc is nulled across multi-row groups.
+            clicks = _safe_float(entry.get("clicks"))
+        else:
+            ecpc = _safe_float(entry.get("ecpc"))
+            clicks = spend / ecpc if ecpc > 0 else 0.0
+        row = {
+            "platform_name": entry.get(breakdown_key) or "Unknown",
+            "spend": spend,
+            "impressions": impressions,
+            "clicks": clicks,
+        }
+        if campaign_key:
+            row["campaign_name"] = entry.get(campaign_key) or "Unknown"
+        rows.append(row)
+    return _enrich_spend_rows(rows)
 
 
 async def _list_spend(
@@ -140,19 +177,19 @@ async def _run_outcome_sanity_probe(
     body = build_data_export_payload(
         date_start=check_date,
         date_end=check_date,
-        metrics=["txns", "rev"],
+        metrics=["txns", "revAttributed"],
         breakdowns=[],
     )
     rows = await _run_export_pipeline(
         client,
         body,
         breakdowns=[],
-        metrics=["txns", "rev"],
+        metrics=["txns", "revAttributed"],
     )
-    totals = rows[0] if rows else {"txns": 0.0, "rev": 0.0}
+    totals = rows[0] if rows else {"txns": 0.0, "revAttributed": 0.0}
     return {
         "transactions": _safe_float(totals.get("txns")),
-        "revenue": _safe_float(totals.get("rev")),
+        "revenue": _safe_float(totals.get("revAttributed")),
     }
 
 
@@ -253,11 +290,13 @@ async def _check_connection(
         lines = [
             f"Status: {status}",
             f"Environment: {config.environment}",
-            f"Spend API: OK - {record_count} spend rows for {yesterday}",
+            f"Uploaded Spend API: OK - {record_count} uploaded spend rows for "
+            f"{yesterday} (0 is normal for natively-integrated accounts)",
             metadata_line or "Data Export metadata: Skipped",
             outcome_line,
-            f"Platforms visible from spend: {platform_text}",
-            "Note: spend rows are ad spend records, not orders or transactions.",
+            f"Platforms with uploaded spend: {platform_text}",
+            "Note: real ad spend comes from the Data Export API (northbeam_spend); "
+            "the Uploaded Spend API only returns customer-uploaded, non-integrated spend.",
         ]
         if status == "Partially connected":
             lines.append(
@@ -286,7 +325,7 @@ async def _check_connection(
 
 
 @mcp.tool()
-async def northbeam_list_spend(
+async def northbeam_list_uploaded_spend(
     date: str | None = None,
     date_start: str | None = None,
     date_end: str | None = None,
@@ -299,15 +338,14 @@ async def northbeam_list_spend(
     page_size: int = 1000,
     fetch_all: bool = False,
 ) -> dict[str, Any]:
-    """Query Northbeam spend records. Returns spend, clicks, impressions, and
-    pre-computed efficiency metrics (CPC, CPM, CTR) per row.
-    Filterable by date range, platform, campaign, adset, and ad.
-    Use fetch_all=true to auto-paginate and retrieve all matching records.
+    """Query spend a customer UPLOADED via the Spend API for non-integrated
+    channels (e.g. email tools). This is NOT the source of platform ad spend —
+    it returns empty for natively-integrated accounts (Facebook/Google/TikTok).
+    For real ad spend and efficiency, use northbeam_spend.
 
     Date parameters: provide 'date' for a single day, or 'date_start'+'date_end'
-    for a range. Format: YYYY-MM-DD.
-
-    platform_name filters results server-side (case-insensitive). Example: 'Facebook'.
+    for a range. Format: YYYY-MM-DD. platform_name filters server-side
+    (case-insensitive).
     """
     return await _list_spend(
         date=date,
@@ -345,15 +383,185 @@ async def _list_options(config: NorthbeamConfig | None = None) -> dict[str, Any]
         raise ToolError(f"Error fetching export options: {e}")
 
 
+SPEND_EXPORT_METRICS = ["spend", "impressions", "ecpc"]
+_VALID_SPEND_BREAKDOWNS = ("platform", "campaign")
+
+
+async def _spend_via_export(
+    config: NorthbeamConfig | None = None,
+    date_start: str = "",
+    date_end: str = "",
+    platform_name: str | None = None,
+    breakdown: str = "platform",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
+) -> dict[str, Any]:
+    """Source spend + efficiency (impressions, clicks, CPC, CPM, CTR) from the
+    Data Export API, by platform (default) or by campaign. Spend is
+    attribution-independent; the defaults match the account's UI default.
+
+    breakdown="campaign" sends level=campaign (campaign is the export level, NOT
+    a Northbeam breakdown dimension) with a Platform payload breakdown, then
+    aggregates on platform + campaign_name so campaigns never collapse.
+
+    Results are capped at MAX_RESULT_ROWS rows; check `truncated` and narrow by
+    platform_name or date range if set."""
+    breakdown = (breakdown or "platform").lower()
+    if breakdown not in _VALID_SPEND_BREAKDOWNS:
+        raise ToolError(
+            f"Unsupported breakdown {breakdown!r}; use 'platform' or 'campaign'."
+        )
+    if breakdown == "campaign":
+        level = "campaign"
+        aggregation_breakdowns = ["platform", "campaign_name"]
+        campaign_key = "campaign_name"
+    else:
+        level = "platform"
+        aggregation_breakdowns = ["platform"]
+        campaign_key = None
+
+    try:
+        if config is None:
+            config = load_config()
+        async with NorthbeamClient(config) as client:
+            body = await _build_export_body(
+                client,
+                date_start=date_start,
+                date_end=date_end,
+                metrics=SPEND_EXPORT_METRICS,
+                breakdowns=["platform"],
+                attribution_model=attribution_model,
+                attribution_window=attribution_window,
+                level=level,
+            )
+            aggregated = await _run_export_pipeline(
+                client, body,
+                breakdowns=aggregation_breakdowns,
+                metrics=SPEND_EXPORT_METRICS,
+            )
+
+        rows = _spend_rows_from_aggregated(aggregated, campaign_key=campaign_key)
+        if platform_name:
+            needle = platform_name.lower()
+            rows = [r for r in rows if (r.get("platform_name") or "").lower() == needle]
+
+        total_count = len(rows)
+        truncated = total_count > MAX_RESULT_ROWS
+        return {
+            "data": rows[:MAX_RESULT_ROWS],
+            "total_count": total_count,
+            "truncated": truncated,
+            "date_range": {"start": date_start, "end": date_end},
+        }
+    except (NorthbeamAuthError, NorthbeamConfigError):
+        raise ToolError(AUTH_ERROR_MSG) from None
+    except ExceptionGroup as eg:
+        if _exception_group_contains_auth_error(eg):
+            raise ToolError(AUTH_ERROR_MSG) from None
+        logger.error("spend export error: %r", eg)
+        raise ToolError(f"Error querying Northbeam spend: {eg.exceptions[0]}") from None
+    except ToolError:
+        raise
+    except Exception as e:
+        logger.error("spend export error: %s", e)
+        raise ToolError(f"Error querying Northbeam spend: {e}")
+
+
+@mcp.tool()
+async def northbeam_spend(
+    date_start: str,
+    date_end: str,
+    platform_name: str | None = None,
+    breakdown: str = "platform",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
+) -> dict[str, Any]:
+    """Query ad spend and efficiency (spend, impressions, clicks, CPC, CPM, CTR)
+    from the Northbeam Data Export API. This is the source of truth for spend on
+    natively-integrated accounts (Facebook/Google/TikTok).
+
+    Date format: YYYY-MM-DD. platform_name filters results (case-insensitive).
+    breakdown="platform" (default) returns one row per platform; "campaign"
+    returns one row per campaign (with platform_name + campaign_name) for
+    campaign-level analysis (anomalies, fatigue, naming intelligence). Defaults
+    match the account's UI default (Clicks only / 1-day / accrual); spend itself
+    is attribution-independent.
+    """
+    return await _spend_via_export(
+        date_start=date_start,
+        date_end=date_end,
+        platform_name=platform_name,
+        breakdown=breakdown,
+        attribution_model=attribution_model,
+        attribution_window=attribution_window,
+    )
+
+
+def _select_accounting_partition(
+    rows: list[dict[str, str]],
+    accounting_mode: str | None,
+) -> list[dict[str, str]]:
+    """Drop fan-out duplicates. When a revenue metric is requested the API
+    returns one row per accounting mode (accrual + cash); spend is repeated on
+    each, so summing doubles it. When the CSV carries an accounting-mode column,
+    keep only rows matching the requested mode."""
+    if not accounting_mode or not rows:
+        return rows
+    candidates = partition_column_candidates("accounting_mode")
+    column = next((c for c in candidates if c in rows[0]), None)
+    if column is None:
+        return rows
+    needle = accounting_mode.strip().lower()
+    filtered = [
+        row for row in rows
+        if str(row.get(column, "")).strip().lower().startswith(needle)
+    ]
+    if filtered:
+        return filtered
+
+    # Nothing matched the requested mode. If several distinct modes are present,
+    # summing them would double spend (the very fan-out this guard prevents) and
+    # we cannot tell which rows to keep — fail loud rather than return
+    # silently-doubled numbers. A single unmatched mode cannot double spend, so
+    # keep those rows with a warning.
+    distinct = sorted({str(row.get(column, "")).strip() for row in rows})
+    if len(distinct) > 1:
+        raise ToolError(
+            f"Data Export returned multiple accounting modes {distinct} in column "
+            f"{column!r}, none matching the requested mode {accounting_mode!r}; "
+            f"refusing to aggregate to avoid double-counting spend. Verify the "
+            f"accounting-mode value format in data_export.PARTITION_COLUMN_ALIASES."
+        )
+    logger.warning(
+        "accounting-mode column %r present with a single unmatched mode %r "
+        "(requested %r); keeping rows (no fan-out to drop)",
+        column, distinct[0] if distinct else "", accounting_mode,
+    )
+    return rows
+
+
 def _aggregate_export_rows(
     rows: list[dict[str, str]],
     breakdowns: list[str],
     metrics: list[str],
+    accounting_mode: str | None = None,
+    derive_clicks: bool = False,
 ) -> list[dict[str, Any]]:
-    """Aggregate raw CSV rows by breakdown keys."""
+    """Aggregate raw CSV rows by breakdown keys, after dropping fan-out
+    duplicate accounting-mode rows. When `derive_clicks` is set (the spend and
+    portfolio paths), a summed per-raw-row `clicks` field is attached; generic
+    exports leave it off so the response contract stays exactly the requested
+    metrics."""
+    rows = _select_accounting_partition(rows, accounting_mode)
     groups: dict[tuple, dict[str, Any]] = defaultdict(
         lambda: {"_count": 0}
     )
+
+    # `ecpc` (cost per click) is a per-row ratio, so an aggregated ecpc is null
+    # for any group spanning multiple raw rows (e.g. daily granularity). Derive
+    # clicks at the raw-row level (clicks = spend / ecpc) and sum them — an
+    # additive quantity that survives aggregation — so CPC/CTR reconcile.
+    derive_clicks = derive_clicks and "ecpc" in metrics and "spend" in metrics
 
     for row in rows:
         key = tuple(
@@ -362,6 +570,15 @@ def _aggregate_export_rows(
         )
         group = groups[key]
         group["_count"] += 1
+        if derive_clicks:
+            row_spend = _safe_float(
+                _first_row_value(row, metric_column_candidates("spend"), default=0)
+            )
+            row_ecpc = _safe_float(
+                _first_row_value(row, metric_column_candidates("ecpc"), default=0)
+            )
+            if row_ecpc > 0:
+                group["clicks"] = group.get("clicks", 0.0) + row_spend / row_ecpc
         for m in metrics:
             metric_value = _first_row_value(row, metric_column_candidates(m), default=0)
             value = _safe_float(metric_value)
@@ -380,6 +597,8 @@ def _aggregate_export_rows(
                 continue
             values = group.get("_metric_values", {}).get(m, [])
             entry[m] = round(values[0], 2) if len(values) == 1 else None
+        if derive_clicks:
+            entry["clicks"] = group.get("clicks", 0.0)
         entry["_row_count"] = group["_count"]
         aggregated.append(entry)
 
@@ -399,6 +618,7 @@ async def _build_export_body(
     breakdowns: list[str],
     attribution_model: str,
     attribution_window: str,
+    level: str = "platform",
 ) -> dict[str, Any]:
     try:
         breakdown_values = None
@@ -416,6 +636,7 @@ async def _build_export_body(
             attribution_model=attribution_model,
             attribution_window=attribution_window,
             breakdown_values=breakdown_values,
+            level=level,
         )
     except ValueError as e:
         raise ToolError(str(e)) from None
@@ -427,8 +648,8 @@ async def _data_export(
     date_end: str = "",
     metrics: list[str] | None = None,
     breakdowns: list[str] | None = None,
-    attribution_model: str = "northbeam_custom__va",
-    attribution_window: str = "7",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
 ) -> dict[str, Any]:
     """Run a full Data Export: create → poll → download → aggregate."""
     try:
@@ -461,8 +682,13 @@ async def _data_export(
             raw_rows = csv_result["data"]
             total_rows = csv_result["total_rows"]
 
+        accounting_modes = (
+            body.get("attribution_options", {}).get("accounting_modes") or []
+        )
+        accounting_mode = accounting_modes[0] if accounting_modes else None
         aggregated = _aggregate_export_rows(
-            raw_rows, effective_breakdowns, effective_metrics
+            raw_rows, effective_breakdowns, effective_metrics,
+            accounting_mode=accounting_mode,
         ) if raw_rows else []
 
         total_groups = len(aggregated)
@@ -523,13 +749,16 @@ async def northbeam_data_export(
     date_end: str,
     metrics: list[str],
     breakdowns: list[str],
-    attribution_model: str = "northbeam_custom__va",
-    attribution_window: str = "7",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
 ) -> dict[str, Any]:
     """Run a Northbeam Data Export for outcome metrics (revenue, ROAS, CAC,
     conversions, etc.) with flexible breakdowns and attribution settings.
 
-    Use northbeam_list_options to discover valid metric/breakdown/model values.
+    Revenue is reported via `revAttributed` (the UI "Revenue"/ROAS basis), not
+    `rev`. Defaults match the account's UI default: Clicks only
+    (`northbeam_custom`), 1-day window, accrual. Use northbeam_list_options to
+    discover valid metric/breakdown/model values.
 
     Returns aggregated data grouped by the requested breakdowns. Additive
     metrics are summed; ratio metrics are left null when a group spans multiple
@@ -637,20 +866,29 @@ async def _run_export_pipeline(
                 for metric in raw_metrics
             ]
 
+        accounting_modes = (
+            body.get("attribution_options", {}).get("accounting_modes") or []
+        )
+        accounting_mode = accounting_modes[0] if accounting_modes else None
         return _aggregate_export_rows(
             raw_rows,
             effective_breakdowns,
             effective_metrics,
+            accounting_mode=accounting_mode,
+            derive_clicks=True,
         )
     return []
+
+
+PORTFOLIO_EXPORT_METRICS = ["spend", "impressions", "ecpc", "revAttributed", "roas"]
 
 
 async def _portfolio_health(
     config: NorthbeamConfig | None = None,
     date_start: str = "",
     date_end: str = "",
-    attribution_model: str = "northbeam_custom__va",
-    attribution_window: str = "7",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
 ) -> dict[str, Any]:
     try:
         if config is None:
@@ -662,87 +900,37 @@ async def _portfolio_health(
             date_start = date_start or today.replace(day=1).isoformat()
 
         async with NorthbeamClient(config) as client:
-            export_result: list[dict[str, Any]] | BaseException | None = None
-            try:
-                export_body = await _build_export_body(
-                    client,
-                    date_start=date_start,
-                    date_end=date_end,
-                    metrics=["rev", "roas"],
-                    breakdowns=["platform"],
-                    attribution_model=attribution_model,
-                    attribution_window=attribution_window,
-                )
-            except (NorthbeamAuthError, NorthbeamConfigError):
-                raise
-            except ExceptionGroup as eg:
-                if _exception_group_contains_auth_error(eg):
-                    raise NorthbeamAuthError(str(eg)) from eg
-                export_result = RuntimeError(_format_exception_message(eg))
-            except Exception as e:
-                export_result = e
+            export_body = await _build_export_body(
+                client,
+                date_start=date_start,
+                date_end=date_end,
+                metrics=PORTFOLIO_EXPORT_METRICS,
+                breakdowns=["platform"],
+                attribution_model=attribution_model,
+                attribution_window=attribution_window,
+            )
+            aggregated = await _run_export_pipeline(
+                client,
+                export_body,
+                breakdowns=["platform"],
+                metrics=PORTFOLIO_EXPORT_METRICS,
+            )
 
-            if export_result is None:
-                spend_task = asyncio.create_task(
-                    client.list_spend(
-                        date_start=date_start,
-                        date_end=date_end,
-                        fetch_all=True,
-                    )
-                )
-                export_task = asyncio.create_task(
-                    _run_export_pipeline(
-                        client,
-                        export_body,
-                        breakdowns=["platform"],
-                        metrics=["rev", "roas"],
-                    )
-                )
-                spend_result, export_result = await asyncio.gather(
-                    spend_task, export_task, return_exceptions=True
-                )
-            else:
-                try:
-                    spend_result = await client.list_spend(
-                        date_start=date_start,
-                        date_end=date_end,
-                        fetch_all=True,
-                    )
-                except Exception as e:
-                    spend_result = e
-
-        if isinstance(spend_result, Exception):
-            if isinstance(spend_result, (NorthbeamAuthError, NorthbeamConfigError)):
-                raise ToolError(AUTH_ERROR_MSG) from None
-            raise ToolError(f"Spend query failed: {spend_result}")
-
-        spend_rows = spend_result.get("data") or []
+        spend_rows = _spend_rows_from_aggregated(aggregated)
         blended = _compute_blended_metrics(spend_rows)
         by_platform = _aggregate_spend_by_platform(spend_rows)
 
-        outcome_data = None
-        outcome_error = None
-        if isinstance(export_result, Exception):
-            outcome_error = str(export_result)
-        else:
-            outcome_data = export_result
-
-        response: dict[str, Any] = {
+        return {
             "summary": {
                 "date_range": {"start": date_start, "end": date_end},
                 "attribution_model": attribution_model,
+                "attribution_window": attribution_window,
                 "record_count": len(spend_rows),
                 **blended,
             },
             "spend_by_platform": by_platform,
+            "outcomes": aggregated,
         }
-
-        if outcome_data is not None:
-            response["outcomes"] = outcome_data
-        if outcome_error is not None:
-            response["outcome_error"] = outcome_error
-
-        return response
 
     except (NorthbeamAuthError, NorthbeamConfigError):
         raise ToolError(AUTH_ERROR_MSG) from None
@@ -751,8 +939,10 @@ async def _portfolio_health(
     except ExceptionGroup as eg:
         if _exception_group_contains_auth_error(eg):
             raise ToolError(AUTH_ERROR_MSG) from None
-        logger.error("portfolio_health error: %s", eg)
-        raise ToolError(f"Error building portfolio health: {_format_exception_message(eg)}")
+        logger.error("portfolio_health error: %r", eg)
+        raise ToolError(
+            f"Error building portfolio health: {_format_exception_message(eg)}"
+        ) from None
     except Exception as e:
         logger.error("portfolio_health error: %s", e)
         raise ToolError(f"Error building portfolio health: {e}")
@@ -762,17 +952,18 @@ async def _portfolio_health(
 async def northbeam_portfolio_health(
     date_start: str = "",
     date_end: str = "",
-    attribution_model: str = "northbeam_custom__va",
-    attribution_window: str = "7",
+    attribution_model: str = "northbeam_custom",
+    attribution_window: str = "1",
 ) -> dict[str, Any]:
     """Get a holistic portfolio health snapshot combining spend efficiency
-    metrics (CPC, CPM, CTR) with outcome metrics (revenue, ROAS).
+    (CPC, CPM, CTR) with outcomes (revAttributed, ROAS), all from one Data
+    Export so spend and revenue come from the same accrual rows.
 
-    Runs spend and data export queries concurrently for faster results.
-    Defaults to month-to-date if no dates provided.
+    Defaults to month-to-date and the account's UI attribution default
+    (Clicks only / 1-day / accrual).
 
-    Returns: blended metrics, per-platform breakdown with spend share,
-    and outcome data aggregated by platform.
+    Returns: blended metrics, per-platform breakdown with spend share, and
+    per-platform outcomes (revAttributed, roas).
     """
     return await _portfolio_health(
         date_start=date_start,

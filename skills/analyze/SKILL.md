@@ -1,7 +1,7 @@
 ---
 name: analyze
 description: Strategic Northbeam analysis — ad hoc queries, anomaly detection, budget optimization, portfolio health, and outcome metrics (ROAS, revenue, CAC). Use when the user asks about ad spend, marketing performance, budget allocation, campaign efficiency, or return on ad spend.
-allowed-tools: mcp__northbeam__northbeam_list_spend, mcp__northbeam__northbeam_data_export, mcp__northbeam__northbeam_list_options, mcp__northbeam__northbeam_check_connection, mcp__northbeam__northbeam_portfolio_health, Read
+allowed-tools: mcp__northbeam__northbeam_spend, mcp__northbeam__northbeam_list_uploaded_spend, mcp__northbeam__northbeam_data_export, mcp__northbeam__northbeam_list_options, mcp__northbeam__northbeam_check_connection, mcp__northbeam__northbeam_portfolio_health, Read
 user-invocable: true
 ---
 
@@ -17,7 +17,7 @@ You are a strategic marketing analyst with access to Northbeam spend data. Your 
 
 ### Authentication
 
-Do NOT call `northbeam_check_connection` as a pre-check — it wastes a tool call. Instead, call `northbeam_list_spend` directly with the user's query. If the tool call fails with an error (you'll see `isError: true` or an error message containing "Authentication failed" or "Run /northbeam:setup"), relay that to the user and stop:
+Do NOT call `northbeam_check_connection` as a pre-check — it wastes a tool call. Instead, call `northbeam_spend` directly with the user's query. If the tool call fails with an error (you'll see `isError: true` or an error message containing "Authentication failed" or "Run /northbeam:setup"), relay that to the user and stop:
 
 > "Your Northbeam credentials aren't configured or are invalid. Run `/northbeam:setup` to get connected, then come back."
 
@@ -46,13 +46,14 @@ Choose the right tool based on what the user is asking about:
 
 | User asks about | Tool to use | Why |
 |----------------|-------------|-----|
-| Spend, impressions, clicks, CPC, CPM, CTR | `northbeam_list_spend` | Spend API returns these + pre-computed CPC/CPM/CTR |
-| Revenue, ROAS, CAC, conversions, orders | `northbeam_data_export` | Outcome metrics require Data Export |
-| "How are we doing?" / portfolio health | `northbeam_portfolio_health` | Single call runs spend + export concurrently |
-| Budget pacing | `northbeam_list_spend` | Pacing uses spend data only |
+| Spend, impressions, clicks, CPC, CPM, CTR | `northbeam_spend` | Data Export `spend`/`imprs`/`ecpc`; the source of truth for integrated accounts |
+| Revenue, ROAS, CAC, conversions, orders | `northbeam_data_export` | Outcome metrics via `revAttributed` |
+| "How are we doing?" / portfolio health | `northbeam_portfolio_health` | One combined export: spend + outcomes |
+| Budget pacing | `northbeam_spend` | Pacing uses spend data only |
+| Uploaded (non-integrated) spend | `northbeam_list_uploaded_spend` | Customer-uploaded spend only; empty for integrated accounts |
 | Available metrics/breakdowns | `northbeam_list_options` | Discovery before data_export calls |
 
-**Rule of thumb:** If the user mentions money going OUT (spend, budget, cost), use `northbeam_list_spend`. If they mention money coming IN (revenue, ROAS, orders) or conversion outcomes, use `northbeam_data_export`.
+**Rule of thumb:** Spend, budget, and efficiency (money going OUT) → `northbeam_spend`. Revenue, ROAS, orders (money coming IN) → `northbeam_data_export`.
 
 ### Discovery Flow
 
@@ -65,24 +66,28 @@ When the user asks for metrics or breakdowns you haven't seen before:
 
 ### Data Export Defaults
 
-Unless the user specifies otherwise, use these defaults for `northbeam_data_export`:
-- Northbeam Custom VA attribution
-- 7-day attribution window
+Unless the user specifies otherwise, use these defaults — they match the account's UI default:
+- Clicks only attribution (`northbeam_custom`)
+- 1-day attribution window
+- Accrual accounting mode
+
+Attribution windows apply only to accrual mode; cash mode is always lifetime. These are overridable per request.
 
 Common outcome metric IDs:
-- `rev` - revenue
+- `revAttributed` - revenue (the UI "Revenue"/ROAS basis; windowed, model-dependent). Do NOT use `rev` — it is a cash/total basis that reads empty in the accrual windowed view.
 - `txns` - transactions/orders
-- `roas` - return on ad spend
+- `roas` - return on ad spend (revAttributed / spend)
 - `cac` - customer acquisition cost
 
 Order and transaction questions route to `northbeam_data_export`, not
-`northbeam_list_spend`. Spend rows are ad spend records and should not be used
-as a proxy for orders.
+`northbeam_spend`. Spend rows are ad spend records and should not be used as a
+proxy for orders.
 
 When `northbeam_data_export` aggregates multiple raw rows, additive metrics such
-as `rev` and `txns` are summed. Ratio metrics such as `roas` and `cac` may be
-`null` for multi-row groups; do not add or average them manually unless you have
-the additive inputs needed to compute the ratio.
+as `revAttributed` and `txns` are summed. Ratio metrics such as `roas` and `cac`
+may be `null` for multi-row groups; do not add or average them manually unless
+you have the additive inputs needed to compute the ratio. The export drops
+cash-vs-accrual fan-out duplicates automatically.
 
 If the user asks about attribution model differences, use the Attribution Model Comparison capability below.
 
@@ -127,7 +132,7 @@ Thresholds:
 
 ## Derived Metrics
 
-`northbeam_list_spend` returns pre-computed efficiency metrics on each row:
+`northbeam_spend` returns pre-computed efficiency metrics on each row:
 
 - **cpc** — cost per click (spend / clicks)
 - **cpm** — cost per mille (spend / impressions × 1000)
@@ -139,7 +144,7 @@ These are `null` when the denominator is zero (no clicks or no impressions). Dis
 
 ## Capability: Ad Hoc Spend Analysis
 
-Answer free-form spend questions using `northbeam_list_spend`.
+Answer free-form spend questions using `northbeam_spend`.
 
 ### Translation Guide
 
@@ -153,7 +158,7 @@ Answer free-form spend questions using `northbeam_list_spend`.
 | "by channel" | Group results by `platform_name` in your output |
 | "top 5" | Sort by spend descending, return first 5 |
 
-**Tip:** `northbeam_list_spend` accepts `platform_name` for server-side filtering (case-insensitive). Use it to avoid fetching irrelevant platforms.
+**Tip:** `northbeam_spend` accepts `platform_name` for server-side filtering (case-insensitive). Use it to avoid fetching irrelevant platforms.
 
 ### Large Result Summarization
 

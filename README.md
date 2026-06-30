@@ -96,6 +96,25 @@ Your keys are kept in Claude Code's secure credential store — you won't need a
 
 ---
 
+## Updating the plugin
+
+When a new version is released, refresh the marketplace first, then update the installed plugin.
+
+**Claude Code (terminal):**
+
+```text
+/plugin marketplace update northbeam-plugin   ← pull the latest marketplace manifest
+/plugin update northbeam                       ← update the plugin (restart to apply)
+```
+
+Equivalent from your shell: `claude plugin marketplace update northbeam-plugin && claude plugin update northbeam`.
+
+**Codex:** re-run `codex plugin marketplace add domainmethods/northbeam-plugin` to refresh the manifest, then `codex plugin add northbeam@northbeam-plugin`, and start a new thread.
+
+Installed through the **Claude Code desktop app** rather than the terminal? Updating there works differently — see **"Plugin is stuck on an old version"** under [Troubleshooting](#troubleshooting).
+
+---
+
 ## What it can do
 
 After setup, the assistant can:
@@ -126,6 +145,9 @@ That's normal. If your ad accounts are connected to Northbeam directly, your rea
 
 **The `/northbeam:*` commands appear, but the assistant can't pull any data**
 You're probably in the Claude.ai chat app, Claude Cowork, or Claude Code on the web. Those load the plugin's commands but don't run its local data connector (see [Where this works](#where-this-works)). Switch to Claude Code in your terminal — or Codex — where the connector runs.
+
+**Plugin is stuck on an old version / a new release won't install**
+If you installed through the **Claude Code desktop app** (the Windows or Mac app, not the terminal), the plugin comes from a marketplace tied to your Claude *account*, and the Claude backend caches that marketplace — it does **not** automatically pull new commits from GitHub. The app's in-app **Refresh** and **Remove marketplace** buttons only act on a local copy, not the account record, so the version won't change and a marketplace you remove reappears on the next sync. The account-scoped marketplace is managed on the web: go to **[claude.ai](https://claude.ai) → Settings**, remove the marketplace there, then re-add it and reinstall the plugin. That forces a fresh sync from GitHub `main`. (Pushing a new version to GitHub alone won't reach existing desktop installs until this re-sync happens.) In **terminal Claude Code**, use the commands under [Updating the plugin](#updating-the-plugin) instead.
 
 **The plugin won't start / `uv` errors**
 Make sure `uv` installed correctly:
@@ -234,6 +256,18 @@ Run the validator and tests before publishing or reinstalling a changed plugin:
 python3 ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py northbeam
 cd northbeam && uv run --extra dev pytest
 ```
+
+### Releasing a new version
+
+Bump the version in all three places so they stay in sync, then commit:
+
+- `northbeam/.claude-plugin/plugin.json` — `version`
+- `.claude-plugin/marketplace.json` — **both** `metadata.version` and the `plugins[0].version` entry
+- `northbeam/pyproject.toml` — `version`
+
+Run `claude plugin tag` against the `northbeam/` directory — it validates that `plugin.json` and the enclosing marketplace entry agree before creating a `northbeam--v{version}` release tag. (The Codex manifest, `.agents/plugins/marketplace.json`, has no version field, so there's nothing to bump there.)
+
+**Desktop-app users won't auto-update.** A Claude Code desktop install caches the account-scoped marketplace on the Claude backend and won't see a new version from a `main` push alone — the user has to remove and re-add the marketplace (via **claude.ai → Settings**) to trigger a re-sync. See **"Plugin is stuck on an old version"** under [Troubleshooting](#troubleshooting).
 
 ### Developer troubleshooting
 
